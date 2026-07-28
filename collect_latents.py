@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from terratorch import BACKBONE_REGISTRY
 import torch
 import albumentations as A
@@ -9,14 +9,16 @@ from utils.terramesh import build_terramesh_dataset, Transpose, MultimodalTransf
 import pandas as pd
 import zarr
 import pickle
+import subprocess
 
 
 MODALITIES = ["S2L2A", "S2L1C", "S1GRD", "S1RTC", "DEM", "NDVI", "LULC"]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-VAL_METADATA_PATH = "data/val_metadata.parquet"
+VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
 DATA_DIR = "data"
-ZARR_FILENAME = "latents.zarr"
-META_FILENAME = "metadata.pkl"
+VAL_METADATA_PATH = os.path.join(DATA_DIR, "val_metadata.parquet")
+ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr.zip")
+META_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 
 
 def get_metadata(metadata_df, key):
@@ -78,14 +80,14 @@ def main():
     dataloader = DataLoader(dataset, batch_size=None, num_workers=64,
                             persistent_workers=True, prefetch_factor=2)
 
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    subprocess.run(["wget", "-O", VAL_METADATA_PATH, VAL_METADATA_URL], check=True)
     metadata_df = pd.read_parquet(VAL_METADATA_PATH)
 
     models, latent_dim_dict = load_models()
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    zarr_path = os.path.join(DATA_DIR, ZARR_FILENAME)
-    meta_path = os.path.join(DATA_DIR, META_FILENAME)
-    root = zarr.open(zarr_path, mode="w")
+    root = zarr.open(ZARR_PATH, mode="w")
 
     datasets = {}
     for model_name, model in models.items():
@@ -113,7 +115,7 @@ def main():
                 latent = model(input)[-1].mean(axis=1).cpu().numpy()
                 dataset.append(latent)
 
-    with open(meta_path, "wb") as f:
+    with open(META_PATH, "wb") as f:
         pickle.dump(metadatas, f)
 
 
