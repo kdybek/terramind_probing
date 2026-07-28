@@ -1,0 +1,8 @@
+webdataset
+albumentations
+fsspec
+braceexpand
+zarr==2.18.0
+numcodecs==0.15.1
+terratorch
+torch
