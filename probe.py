@@ -9,6 +9,7 @@ from sklearn.model_selection import KFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
+from sklearn.decomposition import PCA
 from xgboost import XGBRegressor
 
 
@@ -19,36 +20,32 @@ RESULTS_PATH = os.path.join(DATA_DIR, "results.csv")
 SEED = 42
 
 
-def run_probe(latents, model_name, tgt_name, tgt, probe_name):
+def apply_pca(latents, n_components):
+    scaler = StandardScaler()
+    latents = scaler.fit_transform(latents)
+    pca = PCA(n_components=n_components, random_state=SEED)
+    latents_pca = pca.fit_transform(latents)
+    return latents_pca
+
+
+def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, control):
+    if n_components is not None:
+        latents = apply_pca(latents, n_components)
+
+    if control:
+        np.random.shuffle(latents)
+
     if probe_name == "ridge":
         clf = make_pipeline(
-            StandardScaler(), RidgeCV(alphas=np.logspace(-4, 4, 30))
+            StandardScaler(),
+            RidgeCV(random_state=SEED)
         )
     elif probe_name == "xgboost":
-        clf = XGBRegressor(
-            n_estimators=300,
-            max_depth=6,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=SEED,
-            verbosity=0,
-        )
+        clf = XGBRegressor(random_state=SEED)
     elif probe_name == "mlp":
         clf = make_pipeline(
             StandardScaler(),
-            MLPRegressor(
-                hidden_layer_sizes=(64,),
-                activation="relu",
-                solver="adam",
-                batch_size=256,
-                learning_rate_init=1e-3,
-                max_iter=1000,
-                early_stopping=True,
-                validation_fraction=0.1,
-                n_iter_no_change=10,
-                random_state=SEED,
-            ),
+            MLPRegressor(random_state=SEED),
         )
     else:
         raise ValueError(f"Unknown probe: {probe_name}")
@@ -63,20 +60,29 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name):
             "probe": probe_name,
             "score": score,
             "split": i,
+            "n_components": n_components,
+            "control": control,
         }
         for i, score in enumerate(scores)
     ]
 
 
 def main():
+    np.random.seed(SEED)
+
     root = zarr.open(LATENTS_PATH, mode="r")
 
     with open(METADATA_PATH, "rb") as f:
         metadata = pickle.load(f)
 
-    preds = {
+    preds_base = {
         "lat": np.array([r["center_lat"] for r in metadata]),
         "lon": np.array([r["center_lon"] for r in metadata]),
+    }
+
+    preds_additional = {
+        "lon_sin": np.array([np.sin(np.radians(r["center_lon"])) for r in metadata]),
+        "lon_cos": np.array([np.cos(np.radians(r["center_lon"])) for r in metadata]),
     }
 
     model_names = [
@@ -89,7 +95,7 @@ def main():
 
     records = []
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=32) as executor:
         for model_name in model_names:
             latents = np.asarray(root[model_name][:])
 
@@ -101,10 +107,30 @@ def main():
                     tgt_name,
                     tgt,
                     probe_name,
+                    None,
+                    control
                 )
-                for tgt_name, tgt in preds.items()
+                for tgt_name, tgt in [preds_base.items()] + [preds_additional.items()]
                 for probe_name in probe_names
+                for control in [False, True]
             ]
+
+            if model_name != "terramind_v1_tiny":
+                futures += [
+                    executor.submit(
+                        run_probe,
+                        latents,
+                        model_name,
+                        tgt_name,
+                        tgt,
+                        probe_name,
+                        192,
+                        control
+                    )
+                    for tgt_name, tgt in preds_base.items()
+                    for probe_name in probe_names
+                    for control in [False, True]
+                ]
 
             for future in as_completed(futures):
                 records.extend(future.result())
