@@ -91,32 +91,23 @@ def main():
         "terramind_v1_base",
         "terramind_v1_large",
     ]
+    num_layers_dict = {
+        "terramind_v1_tiny": 12,
+        "terramind_v1_small": 12,
+        "terramind_v1_base": 12,
+        "terramind_v1_large": 24,
+    }
     probe_names = ["ridge", "xgboost", "mlp"]
 
     records = []
 
-    with ThreadPoolExecutor(max_workers=32) as executor:
+    with ThreadPoolExecutor(max_workers=256) as executor:
         for model_name in model_names:
-            latents = np.asarray(root[model_name][:])
+            num_layers = num_layers_dict[model_name]
+            for layer in range(num_layers):
+                latents = np.asarray(root[model_name][f"layer_{layer}"][:])
 
-            futures = [
-                executor.submit(
-                    run_probe,
-                    latents,
-                    model_name,
-                    tgt_name,
-                    tgt,
-                    probe_name,
-                    None,
-                    control
-                )
-                for tgt_name, tgt in [preds_base.items()] + [preds_additional.items()]
-                for probe_name in probe_names
-                for control in [False, True]
-            ]
-
-            if model_name != "terramind_v1_tiny":
-                futures += [
+                futures = [
                     executor.submit(
                         run_probe,
                         latents,
@@ -124,7 +115,7 @@ def main():
                         tgt_name,
                         tgt,
                         probe_name,
-                        192,
+                        None,
                         control
                     )
                     for tgt_name, tgt in preds_base.items()
@@ -132,8 +123,44 @@ def main():
                     for control in [False, True]
                 ]
 
-            for future in as_completed(futures):
-                records.extend(future.result())
+                if layer == num_layers - 1:
+                    futures += [
+                        executor.submit(
+                            run_probe,
+                            latents,
+                            model_name,
+                            tgt_name,
+                            tgt,
+                            probe_name,
+                            None,
+                            control
+                        )
+                        for tgt_name, tgt in preds_additional.items()
+                        for probe_name in probe_names
+                        for control in [False, True]
+                    ]
+
+                    if model_name != "terramind_v1_tiny":
+                        futures += [
+                            executor.submit(
+                                run_probe,
+                                latents,
+                                model_name,
+                                tgt_name,
+                                tgt,
+                                probe_name,
+                                192,
+                                control
+                            )
+                            for tgt_name, tgt in preds_base.items()
+                            for probe_name in probe_names
+                            for control in [False, True]
+                        ]
+
+                for future in as_completed(futures):
+                    results = future.result()
+                    results["layer"] = layer
+                    records.extend(results)
 
     df = pd.DataFrame.from_records(records)
     df.to_csv(RESULTS_PATH, index=False)

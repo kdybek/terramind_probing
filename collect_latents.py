@@ -35,8 +35,10 @@ def get_metadata(metadata_df, key):
 def load_models():
     model_names = ["terramind_v1_tiny", "terramind_v1_small", "terramind_v1_base", "terramind_v1_large"]
     latent_dims = [192, 384, 768, 1024]
+    num_layers = [12, 12, 12, 24]
     models = {}
     latent_dim_dict = dict(zip(model_names, latent_dims))
+    num_layers_dict = dict(zip(model_names, num_layers))
     for name in model_names:
         model = BACKBONE_REGISTRY.build(
             name,
@@ -48,7 +50,7 @@ def load_models():
         model.eval()
         models[name] = model
 
-    return models, latent_dim_dict
+    return models, latent_dim_dict, num_layers_dict
 
 
 def main():
@@ -77,27 +79,32 @@ def main():
         batch_size=256,
     )
 
-    dataloader = DataLoader(dataset, batch_size=None, num_workers=64,
+    dataloader = DataLoader(dataset, batch_size=None, num_workers=256,
                             persistent_workers=True, prefetch_factor=2)
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    subprocess.run(["wget", "-O", VAL_METADATA_PATH, VAL_METADATA_URL], check=True)
+    if not os.path.exists(VAL_METADATA_PATH):
+        subprocess.run(["wget", "-O", VAL_METADATA_PATH, VAL_METADATA_URL], check=True)
+
     metadata_df = pd.read_parquet(VAL_METADATA_PATH)
 
-    models, latent_dim_dict = load_models()
+    models, latent_dim_dict, num_layers_dict = load_models()
 
     root = zarr.open(ZARR_PATH, mode="w")
 
-    datasets = {}
     for model_name, model in models.items():
         latent_dim = latent_dim_dict[model_name]
-        datasets[model_name] = root.create_dataset(
-            model_name,
-            shape=(0, latent_dim),
-            chunks=(256, latent_dim),
-            dtype=np.float32,
-        )
+        num_layers = num_layers_dict[model_name]
+        model_group = root.create_group(model_name)
+
+        for layer in range(num_layers):
+            model_group.create_dataset(
+                f"layer_{layer}",
+                shape=(0, latent_dim),
+                chunks=(256, latent_dim),
+                dtype=np.float32,
+            )
 
     metadatas = []
     with torch.no_grad():
@@ -111,9 +118,12 @@ def main():
             input = {m: batch[m].to(DEVICE).float() for m in MODALITIES if m in batch}
 
             for model_name, model in models.items():
-                dataset = datasets[model_name]
-                latent = model(input)[-1].mean(axis=1).cpu().numpy()
-                dataset.append(latent)
+                group = root[model_name]
+                latents = model(input)
+
+                for layer in range(len(latents)):
+                    latent = latents[layer].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
+                    group[f"layer_{layer}"].append(latent)
 
     with open(META_PATH, "wb") as f:
         pickle.dump(metadatas, f)
