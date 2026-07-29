@@ -1,3 +1,5 @@
+numpy
+pandas
 webdataset
 albumentations
 fsspec
@@ -6,3 +8,5 @@ zarr==2.18.0
 numcodecs==0.15.1
 terratorch
 torch
+scikit-learn
+xgboost
