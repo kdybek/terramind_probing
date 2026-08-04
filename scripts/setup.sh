@@ -13,6 +13,7 @@
 ml Python/3.11.5
 
 export XDG_CACHE_HOME=$SCRATCH/.cache
+export HF_TOKEN=(cat ~/.hf_token)
 
 mkdir -p $SCRATCH/terramind_probing
 cd $SCRATCH/terramind_probing
@@ -23,3 +24,5 @@ source .venv/bin/activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
+
+hf download ibm-esa-geospatial/TerraMesh --repo-type dataset --include "val/*" --local-dir data/TerraMesh

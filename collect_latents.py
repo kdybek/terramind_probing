@@ -14,6 +14,7 @@ import subprocess
 
 MODALITIES = ["S2L2A", "S2L1C", "S1GRD", "S1RTC", "DEM", "NDVI", "LULC"]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DATASET_PATH = "data/TerraMesh"
 VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
 DATA_DIR = "data"
 VAL_METADATA_PATH = os.path.join(DATA_DIR, "val_metadata.parquet")
@@ -71,7 +72,7 @@ def main():
     )
 
     dataset = build_terramesh_dataset(
-        path="https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/",
+        path=DATASET_PATH,
         modalities=MODALITIES,
         split="val",
         transform=val_transform,
