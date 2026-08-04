@@ -5,7 +5,7 @@
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
 #SBATCH --account=plgcredibleai2026-cpu
-#SBATCH --partition=plgrid-cpu
+#SBATCH --partition=plgrid
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
