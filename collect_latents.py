@@ -17,7 +17,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
 DATA_DIR = "data"
 VAL_METADATA_PATH = os.path.join(DATA_DIR, "val_metadata.parquet")
-ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr.zip")
+ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr")
 META_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 
 
