@@ -20,4 +20,4 @@ cp -rf ~/terramind_probing/* .
 
 source .venv/bin/activate
 
-hf download ibm-esa-geospatial/TerraMesh --repo-type dataset --include "val/*" --local-dir data/TerraMesh
+python download_dataset.py
