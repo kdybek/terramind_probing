@@ -128,6 +128,8 @@ def main():
     with open(META_PATH, "wb") as f:
         pickle.dump(metadatas, f)
 
+    print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
+
 
 if __name__ == "__main__":
     main()
