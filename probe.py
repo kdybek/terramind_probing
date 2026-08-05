@@ -3,6 +3,7 @@ import zarr
 import pickle
 import pandas as pd
 import os
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold, cross_val_score
@@ -135,6 +136,10 @@ def main():
                         ]
                     )
 
+    random.shuffle(run_probe_args)  # Shuffle the arguments for better parallelization
+
+    print(f"Running {len(run_probe_args)} probes in parallel...")
+
     records = []
     with ThreadPoolExecutor(max_workers=128) as executor:
         futures = [
@@ -147,6 +152,8 @@ def main():
 
     df = pd.DataFrame.from_records(records)
     df.to_csv(RESULTS_PATH, index=False)
+
+    print(f"Results saved to {RESULTS_PATH}")
 
 
 if __name__ == "__main__":
