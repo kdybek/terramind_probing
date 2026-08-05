@@ -77,10 +77,10 @@ def main():
         split="val",
         transform=val_transform,
         shuffle=False,
-        batch_size=64,
+        batch_size=128,
     )
 
-    dataloader = DataLoader(dataset, batch_size=None, num_workers=64,
+    dataloader = DataLoader(dataset, batch_size=None, num_workers=16,
                             persistent_workers=True, prefetch_factor=2)
 
     os.makedirs(DATA_DIR, exist_ok=True)
