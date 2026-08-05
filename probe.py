@@ -38,7 +38,7 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, cont
     if probe_name == "ridge":
         clf = make_pipeline(
             StandardScaler(),
-            RidgeCV(random_state=SEED)
+            RidgeCV()
         )
     elif probe_name == "xgboost":
         clf = XGBRegressor(random_state=SEED)
@@ -68,8 +68,6 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, cont
 
 
 def main():
-    np.random.seed(SEED)
-
     root = zarr.open(LATENTS_PATH, mode="r")
 
     with open(METADATA_PATH, "rb") as f:
