@@ -33,6 +33,8 @@ def run_probe(latents_root, model_name, tgt_name, tgt, probe_name, layer, n_comp
     if n_components is not None:
         latents = apply_pca(latents, n_components)
 
+    n_components = latents.shape[1]
+
     if control:
         rng = np.random.default_rng(SEED)
         rng.shuffle(latents)
