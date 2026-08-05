@@ -1,9 +1,9 @@
 #!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=24:00:00
+#SBATCH --time=10:00:00
 #SBATCH --account=plgcredibleai2026-cpu
 #SBATCH --partition=plgrid
 #SBATCH --output=logs/%x_%j.out
@@ -17,6 +17,8 @@ mkdir -p $SCRATCH/terramind_probing
 cd $SCRATCH/terramind_probing
 cp -rf ~/terramind_probing/* .
 
+python -m venv .venv_cpu
 source .venv_cpu/bin/activate
 
-python probe.py
+pip install --upgrade pip
+pip install -r requirements.txt

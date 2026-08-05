@@ -59,7 +59,7 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, cont
             "target": tgt_name,
             "probe": probe_name,
             "score": score,
-            "split": i,
+            "fold": i,
             "n_components": n_components,
             "control": control,
         }
@@ -99,7 +99,7 @@ def main():
 
     records = []
 
-    with ThreadPoolExecutor(max_workers=256) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         for model_name in model_names:
             num_layers = num_layers_dict[model_name]
             for layer in range(num_layers):
@@ -157,7 +157,8 @@ def main():
 
                 for future in as_completed(futures):
                     results = future.result()
-                    results["layer"] = layer
+                    for result in results:
+                        result["layer"] = layer
                     records.extend(results)
 
     df = pd.DataFrame.from_records(records)
