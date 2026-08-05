@@ -75,7 +75,7 @@ def main():
         print("Usage: python probe.py <run_id>")
         sys.exit(1)
 
-    id = sys.argv[1]
+    id = int(sys.argv[1])
 
     results_path = os.path.join(RESULTS_DIR, f"{id}.pkl")
     if os.path.exists(results_path):

@@ -7,8 +7,8 @@
 #SBATCH --array=0-9
 #SBATCH --account=plgcredibleai2026-cpu
 #SBATCH --partition=plgrid
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --output=logs/%x_%A_%a.out
+#SBATCH --error=logs/%x_%A_%a.err
 
 ml Python/3.11.5
 
