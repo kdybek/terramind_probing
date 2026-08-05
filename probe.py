@@ -36,7 +36,8 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_component
         latents = apply_pca(latents, n_components)
 
     if control:
-        np.random.shuffle(latents)
+        rng = np.random.default_rng(SEED)
+        rng.shuffle(latents)
 
     if probe_name == "ridge":
         clf = make_pipeline(
@@ -72,8 +73,6 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_component
 
 
 def main():
-    np.random.seed(SEED)
-
     root = zarr.open(LATENTS_PATH, mode="r")
 
     with open(METADATA_PATH, "rb") as f:
