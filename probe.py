@@ -3,7 +3,7 @@ import zarr
 import pickle
 import pandas as pd
 import os
-import random
+from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold, cross_val_score
@@ -139,17 +139,15 @@ def main():
                         ]
                     )
 
-    random.shuffle(run_probe_args)  # Shuffle the arguments for better parallelization
-
     print(f"Running {len(run_probe_args)} probes in parallel...")
 
     records = []
-    with ThreadPoolExecutor(max_workers=128) as executor:
+    with ThreadPoolExecutor(max_workers=60) as executor:
         futures = [
             executor.submit(run_probe, *args) for args in run_probe_args
         ]
 
-        for future in as_completed(futures):
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Probing"):
             results = future.result()
             records.extend(results)
 

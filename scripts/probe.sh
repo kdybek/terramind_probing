@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=130
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=128G
 #SBATCH --time=8:00:00
 #SBATCH --account=plgcredibleai2026-cpu
@@ -22,4 +22,4 @@ cp -rf ~/terramind_probing/* .
 
 source .venv_cpu/bin/activate
 
-python probe.py
+python -u probe.py
