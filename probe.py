@@ -1,10 +1,8 @@
 import numpy as np
 import zarr
 import pickle
-import pandas as pd
 import os
-from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.pipeline import make_pipeline
@@ -17,7 +15,7 @@ from xgboost import XGBRegressor
 DATA_DIR = "data"
 LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
-RESULTS_PATH = os.path.join(DATA_DIR, "results.csv")
+RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 
 
@@ -29,8 +27,8 @@ def apply_pca(latents, n_components):
     return latents_pca
 
 
-def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_components, control):
-    latents = latents.copy()  # Avoid modifying the original array
+def run_probe(latents_root, model_name, tgt_name, tgt, probe_name, layer, n_components, control):
+    latents = np.asarray(latents_root[:])
 
     if n_components is not None:
         latents = apply_pca(latents, n_components)
@@ -45,7 +43,7 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_component
             RidgeCV()
         )
     elif probe_name == "xgboost":
-        clf = XGBRegressor(n_jobs=1, random_state=SEED)
+        clf = XGBRegressor(random_state=SEED)
     elif probe_name == "mlp":
         clf = make_pipeline(
             StandardScaler(),
@@ -73,6 +71,16 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_component
 
 
 def main():
+    if len(sys.argv) < 2:
+        print("Usage: python probe.py <run_id>")
+        sys.exit(1)
+
+    id = sys.argv[1]
+
+    results_path = os.path.join(RESULTS_DIR, f"{id}.pkl")
+    if os.path.exists(results_path):
+        sys.exit(0)
+
     root = zarr.open(LATENTS_PATH, mode="r")
 
     with open(METADATA_PATH, "rb") as f:
@@ -106,11 +114,12 @@ def main():
     for model_name in model_names:
         num_layers = num_layers_dict[model_name]
         for layer in range(num_layers):
-            latents = np.asarray(root[model_name][f"layer_{layer}"][:])
+            latents_root = root[model_name][f"layer_{layer}"]
 
             run_probe_args.extend(
                 [
-                    (latents, model_name, tgt_name, tgt, probe_name, layer, None, control)
+                    (latents_root, model_name, tgt_name,
+                     tgt, probe_name, layer, None, control)
                     for tgt_name, tgt in preds_base.items()
                     for probe_name in probe_names
                     for control in [False, True]
@@ -120,7 +129,7 @@ def main():
             if layer == num_layers - 1:
                 run_probe_args.extend(
                     [
-                        (latents, model_name, tgt_name, tgt,
+                        (latents_root, model_name, tgt_name, tgt,
                          probe_name, layer, None, control)
                         for tgt_name, tgt in preds_additional.items()
                         for probe_name in probe_names
@@ -131,7 +140,7 @@ def main():
                 if model_name != "terramind_v1_tiny":
                     run_probe_args.extend(
                         [
-                            (latents, model_name, tgt_name, tgt,
+                            (latents_root, model_name, tgt_name, tgt,
                              probe_name, layer, 192, control)
                             for tgt_name, tgt in preds_base.items()
                             for probe_name in probe_names
@@ -139,22 +148,9 @@ def main():
                         ]
                     )
 
-    print(f"Running {len(run_probe_args)} probes in parallel...")
-
-    records = []
-    with ThreadPoolExecutor(max_workers=60) as executor:
-        futures = [
-            executor.submit(run_probe, *args) for args in run_probe_args
-        ]
-
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Probing"):
-            results = future.result()
-            records.extend(results)
-
-    df = pd.DataFrame.from_records(records)
-    df.to_csv(RESULTS_PATH, index=False)
-
-    print(f"Results saved to {RESULTS_PATH}")
+    res = run_probe(*run_probe_args[id])
+    with open(results_path, "wb") as f:
+        pickle.dump(res, f)
 
 
 if __name__ == "__main__":
