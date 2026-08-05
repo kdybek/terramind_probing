@@ -77,6 +77,8 @@ def main():
 
     id = int(sys.argv[1])
 
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+
     results_path = os.path.join(RESULTS_DIR, f"{id}.pkl")
     if os.path.exists(results_path):
         sys.exit(0)
@@ -149,6 +151,7 @@ def main():
                     )
 
     res = run_probe(*run_probe_args[id])
+
     with open(results_path, "wb") as f:
         pickle.dump(res, f)
 
