@@ -30,6 +30,8 @@ def apply_pca(latents, n_components):
 
 
 def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_components, control):
+    latents = latents.copy()  # Avoid modifying the original array
+
     if n_components is not None:
         latents = apply_pca(latents, n_components)
 
