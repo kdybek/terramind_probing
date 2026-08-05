@@ -28,7 +28,7 @@ def apply_pca(latents, n_components):
     return latents_pca
 
 
-def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, control):
+def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_components, control):
     if n_components is not None:
         latents = apply_pca(latents, n_components)
 
@@ -60,6 +60,7 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, n_components, cont
             "probe": probe_name,
             "score": score,
             "fold": i,
+            "layer": layer,
             "n_components": n_components,
             "control": control,
         }
@@ -97,69 +98,52 @@ def main():
     }
     probe_names = ["ridge", "xgboost", "mlp"]
 
-    records = []
+    run_probe_args = []
+    for model_name in model_names:
+        num_layers = num_layers_dict[model_name]
+        for layer in range(num_layers):
+            latents = np.asarray(root[model_name][f"layer_{layer}"][:])
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        for model_name in model_names:
-            num_layers = num_layers_dict[model_name]
-            for layer in range(num_layers):
-                latents = np.asarray(root[model_name][f"layer_{layer}"][:])
-
-                futures = [
-                    executor.submit(
-                        run_probe,
-                        latents,
-                        model_name,
-                        tgt_name,
-                        tgt,
-                        probe_name,
-                        None,
-                        control
-                    )
+            run_probe_args.extend(
+                [
+                    (latents, model_name, tgt_name, tgt, probe_name, layer, None, control)
                     for tgt_name, tgt in preds_base.items()
                     for probe_name in probe_names
                     for control in [False, True]
                 ]
+            )
 
-                if layer == num_layers - 1:
-                    futures += [
-                        executor.submit(
-                            run_probe,
-                            latents,
-                            model_name,
-                            tgt_name,
-                            tgt,
-                            probe_name,
-                            None,
-                            control
-                        )
+            if layer == num_layers - 1:
+                run_probe_args.extend(
+                    [
+                        (latents, model_name, tgt_name, tgt,
+                         probe_name, layer, None, control)
                         for tgt_name, tgt in preds_additional.items()
                         for probe_name in probe_names
                         for control in [False, True]
                     ]
+                )
 
-                    if model_name != "terramind_v1_tiny":
-                        futures += [
-                            executor.submit(
-                                run_probe,
-                                latents,
-                                model_name,
-                                tgt_name,
-                                tgt,
-                                probe_name,
-                                192,
-                                control
-                            )
+                if model_name != "terramind_v1_tiny":
+                    run_probe_args.extend(
+                        [
+                            (latents, model_name, tgt_name, tgt,
+                             probe_name, layer, 192, control)
                             for tgt_name, tgt in preds_base.items()
                             for probe_name in probe_names
                             for control in [False, True]
                         ]
+                    )
 
-                for future in as_completed(futures):
-                    results = future.result()
-                    for result in results:
-                        result["layer"] = layer
-                    records.extend(results)
+    records = []
+    with ThreadPoolExecutor(max_workers=128) as executor:
+        futures = [
+            executor.submit(run_probe, *args) for args in run_probe_args
+        ]
+
+        for future in as_completed(futures):
+            results = future.result()
+            records.extend(results)
 
     df = pd.DataFrame.from_records(records)
     df.to_csv(RESULTS_PATH, index=False)

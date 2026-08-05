@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=144
+#SBATCH --mem=64G
 #SBATCH --time=24:00:00
 #SBATCH --account=plgcredibleai2026-cpu
 #SBATCH --partition=plgrid
