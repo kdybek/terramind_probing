@@ -41,7 +41,7 @@ def run_probe(latents, model_name, tgt_name, tgt, probe_name, layer, n_component
             RidgeCV()
         )
     elif probe_name == "xgboost":
-        clf = XGBRegressor(random_state=SEED)
+        clf = XGBRegressor(n_jobs=1, random_state=SEED)
     elif probe_name == "mlp":
         clf = make_pipeline(
             StandardScaler(),
