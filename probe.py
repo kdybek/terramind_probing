@@ -8,6 +8,7 @@ from sklearn.model_selection import KFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
+from sklearn.random_projection import GaussianRandomProjection
 from sklearn.decomposition import PCA
 from xgboost import XGBRegressor
 
@@ -27,11 +28,38 @@ def apply_pca(latents, n_components):
     return latents_pca
 
 
-def run_probe(latents_root, model_name, tgt_name, tgt, probe_name, layer, n_components, control):
+def apply_random_projection(latents, n_components):
+    scaler = StandardScaler()
+    latents = scaler.fit_transform(latents)
+    rp = GaussianRandomProjection(n_components=n_components, random_state=SEED)
+    latents_rp = rp.fit_transform(latents)
+    return latents_rp
+
+
+def run_probe(
+        latents_root,
+        model_name,
+        tgt_name,
+        tgt,
+        probe_name,
+        layer,
+        n_components,
+        dim_reduction,
+        control
+):
     latents = np.asarray(latents_root[:])
 
-    if n_components is not None:
+    assert dim_reduction in ["pca", "random", "none"], \
+        "dim_reduction must be one of 'pca', 'random', or 'none'"
+    assert not (dim_reduction != "none" and n_components is None), \
+        "n_components must be specified if dim_reduction is not 'none'"
+    assert probe_name in ["ridge", "xgboost", "mlp"], \
+        "probe_name must be one of 'ridge', 'xgboost', or 'mlp'"
+
+    if dim_reduction == "pca":
         latents = apply_pca(latents, n_components)
+    elif dim_reduction == "random":
+        latents = apply_random_projection(latents, n_components)
 
     n_components = latents.shape[1]
 
@@ -51,8 +79,6 @@ def run_probe(latents_root, model_name, tgt_name, tgt, probe_name, layer, n_comp
             StandardScaler(),
             MLPRegressor(random_state=SEED),
         )
-    else:
-        raise ValueError(f"Unknown probe: {probe_name}")
 
     cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
     scores = cross_val_score(clf, latents, tgt, cv=cv, scoring="r2")
@@ -66,6 +92,7 @@ def run_probe(latents_root, model_name, tgt_name, tgt, probe_name, layer, n_comp
             "fold": i,
             "layer": layer,
             "n_components": n_components,
+            "dim_reduction": dim_reduction,
             "control": control,
         }
         for i, score in enumerate(scores)
@@ -90,16 +117,10 @@ def main():
     with open(METADATA_PATH, "rb") as f:
         metadata = pickle.load(f)
 
-    preds_base = {
+    preds = {
         "lat": np.array([r["center_lat"] for r in metadata]),
         "lon": np.array([r["center_lon"] for r in metadata]),
     }
-
-    preds_additional = {
-        "lon_sin": np.array([np.sin(np.radians(r["center_lon"])) for r in metadata]),
-        "lon_cos": np.array([np.cos(np.radians(r["center_lon"])) for r in metadata]),
-    }
-
     model_names = [
         "terramind_v1_tiny",
         "terramind_v1_small",
@@ -123,34 +144,24 @@ def main():
             run_probe_args.extend(
                 [
                     (latents_root, model_name, tgt_name,
-                     tgt, probe_name, layer, None, control)
-                    for tgt_name, tgt in preds_base.items()
+                     tgt, probe_name, layer, None, "none", control)
+                    for tgt_name, tgt in preds.items()
                     for probe_name in probe_names
                     for control in [False, True]
                 ]
             )
 
-            if layer == num_layers - 1:
+            if layer == num_layers - 1 and model_name != "terramind_v1_tiny":
                 run_probe_args.extend(
                     [
                         (latents_root, model_name, tgt_name, tgt,
-                         probe_name, layer, None, control)
-                        for tgt_name, tgt in preds_additional.items()
+                         probe_name, layer, 192, proj, control)
+                        for tgt_name, tgt in preds.items()
                         for probe_name in probe_names
+                        for proj in ["pca", "random"]
                         for control in [False, True]
                     ]
                 )
-
-                if model_name != "terramind_v1_tiny":
-                    run_probe_args.extend(
-                        [
-                            (latents_root, model_name, tgt_name, tgt,
-                             probe_name, layer, 192, control)
-                            for tgt_name, tgt in preds_base.items()
-                            for probe_name in probe_names
-                            for control in [False, True]
-                        ]
-                    )
 
     res = run_probe(*run_probe_args[id])
 
