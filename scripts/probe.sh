@@ -1,10 +1,10 @@
 #!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
-#SBATCH --time=1:00:00
-#SBATCH --array=0-791%32
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --time=4:00:00
+#SBATCH --array=0-221%32
 #SBATCH --account=plgcredibleai2026-cpu
 #SBATCH --partition=plgrid
 #SBATCH --output=logs/%x_%A_%a.out

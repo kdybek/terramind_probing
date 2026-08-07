@@ -4,7 +4,8 @@ import pickle
 import os
 import sys
 from sklearn.linear_model import RidgeCV
-from sklearn.model_selection import KFold, cross_val_score
+from sklearn.model_selection import KFold
+from sklearn.metrics import r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
@@ -16,8 +17,7 @@ from xgboost import XGBRegressor
 DATA_DIR = "data"
 LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
-MAIN_RES_DIR = os.path.join(DATA_DIR, "results_main")
-CIRC_ENC_RES_DIR = os.path.join(DATA_DIR, "results_circ_enc")
+RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 
 
@@ -54,16 +54,35 @@ def get_probe(probe_name):
         raise ValueError(f"Invalid probe name: {probe_name}")
 
 
+def compute_geodesic_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0  # Radius of the Earth in kilometers
+
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2)
+    lon2_rad = np.radians(lon2)
+
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_rad) * \
+        np.cos(lat2_rad) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
+    return R * c
+
+
 def run_probe(
         latents_root,
         model_name,
-        tgt_name,
-        tgt,
+        lats,
+        lons,
         probe_name,
         layer,
         n_components,
         dim_reduction,
-        control
+        control,
+        circular_encoding
 ):
     latents = np.asarray(latents_root[:])
 
@@ -85,97 +104,92 @@ def run_probe(
         rng = np.random.default_rng(SEED)
         rng.shuffle(latents)
 
-    clf = get_probe(probe_name)
-
-    cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
-    scores = cross_val_score(clf, latents, tgt, cv=cv, scoring="r2")
-
-    return [
-        {
-            "model": model_name,
-            "target": tgt_name,
-            "probe": probe_name,
-            "score": score,
-            "fold": i,
-            "layer": layer,
-            "n_components": n_components,
-            "dim_reduction": dim_reduction,
-            "control": control,
-        }
-        for i, score in enumerate(scores)
-    ]
-
-
-def compute_geodesic_distance(lat1, lon1, lat2, lon2):
-    R = 6371.0  # Radius of the Earth in kilometers
-
-    lat1_rad = np.radians(lat1)
-    lon1_rad = np.radians(lon1)
-    lat2_rad = np.radians(lat2)
-    lon2_rad = np.radians(lon2)
-
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_rad) * \
-        np.cos(lat2_rad) * np.sin(dlon / 2) ** 2
-    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-
-    return R * c
-
-
-def test_earth_pred(
-        latents_root,
-        model_name,
-        lats,
-        lons,
-        probe_name,
-        circular_encoding
-):
-    latents = np.asarray(latents_root[:])
-
-    clf_lat = get_probe(probe_name)
-    clf_lon = get_probe(probe_name)
+    reg = get_probe(probe_name)
 
     cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
 
-    mean_distances = []
-    for train_idx, test_idx in cv.split(latents):
+    entries = []
+    for i, (train_idx, test_idx) in enumerate(cv.split(latents)):
         latents_train, latents_test = latents[train_idx], latents[test_idx]
         lats_train, lats_test = lats[train_idx], lats[test_idx]
         lons_train, lons_test = lons[train_idx], lons[test_idx]
 
         if circular_encoding:
-            lons_train = np.concatenate(
-                [np.sin(np.radians(lons_train))[:, np.newaxis],
-                 np.cos(np.radians(lons_train))[:, np.newaxis]], axis=1
-            )
+            train_data = np.column_stack([
+                lats_train,
+                np.sin(np.radians(lons_train)),
+                np.cos(np.radians(lons_train))
+            ])
+        else:
+            train_data = np.column_stack([lats_train, lons_train])
 
-        clf_lat.fit(latents_train, lats_train)
-        clf_lon.fit(latents_train, lons_train)
+        reg.fit(latents_train, train_data)
 
-        lat_preds = clf_lat.predict(latents_test)
-        lon_preds = clf_lon.predict(latents_test)
+        preds = reg.predict(latents_test)
+        lat_preds = preds[:, 0]
+
+        r2_lat = r2_score(lats_test, lat_preds)
 
         if circular_encoding:
-            lon_preds = np.degrees(np.arctan2(lon_preds[:, 0], lon_preds[:, 1]))
+            sin_lon_true = np.sin(np.radians(lons_test))
+            cos_lon_true = np.cos(np.radians(lons_test))
+
+            r2_sin_lon = r2_score(sin_lon_true, preds[:, 1])
+            r2_cos_lon = r2_score(cos_lon_true, preds[:, 2])
+
+            # Overall R2 for the 3-output target
+            all_targets = np.column_stack([
+                lats_test,
+                sin_lon_true,
+                cos_lon_true
+            ])
+            r2_all = r2_score(all_targets, preds, multioutput="variance_weighted")
+
+            lon_preds = np.degrees(np.arctan2(preds[:, 1], preds[:, 2]))
+
+        else:
+            lon_preds = preds[:, 1]
+
+            r2_lon = r2_score(lons_test, lon_preds)
+
+            # Overall R2 for lat/lon
+            all_targets = np.column_stack([
+                lats_test,
+                lons_test
+            ])
+            r2_all = r2_score(all_targets, preds, multioutput="variance_weighted")
 
         distances = compute_geodesic_distance(
-            lat_preds, lon_preds, lats_test, lons_test
+            lats_test, lons_test, lat_preds, lon_preds
         )
 
-        mean_distances.append(np.mean(distances))
-
-    return [
-        {
+        entry = {
             "model": model_name,
             "probe": probe_name,
-            "mean_distance": mean_distance,
-            "fold": i,
+            "layer": layer,
+            "n_components": n_components,
+            "dim_reduction": dim_reduction,
+            "control": control,
             "circular_encoding": circular_encoding,
+            "fold": i,
+            "pred_error_km": np.mean(distances),
+            "r2_lat": r2_lat,
+            "r2_all": r2_all,
         }
-        for i, mean_distance in enumerate(mean_distances)
-    ]
+
+        if circular_encoding:
+            entry.update({
+                "r2_sin_lon": r2_sin_lon,
+                "r2_cos_lon": r2_cos_lon,
+            })
+        else:
+            entry.update({
+                "r2_lon": r2_lon,
+            })
+
+        entries.append(entry)
+
+    return entries
 
 
 def main():
@@ -185,12 +199,10 @@ def main():
 
     id = int(sys.argv[1])
 
-    os.makedirs(MAIN_RES_DIR, exist_ok=True)
-    os.makedirs(CIRC_ENC_RES_DIR, exist_ok=True)
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    main_res_path = os.path.join(MAIN_RES_DIR, f"{id}.pkl")
-    circ_enc_res_path = os.path.join(CIRC_ENC_RES_DIR, f"{id}.pkl")
-    if os.path.exists(main_res_path) or os.path.exists(circ_enc_res_path):
+    res_path = os.path.join(RESULTS_DIR, f"{id}.pkl")
+    if os.path.exists(res_path):
         sys.exit(0)
 
     root = zarr.open(LATENTS_PATH, mode="r")
@@ -198,10 +210,8 @@ def main():
     with open(METADATA_PATH, "rb") as f:
         metadata = pickle.load(f)
 
-    preds = {
-        "lat": np.array([r["center_lat"] for r in metadata]),
-        "lon": np.array([r["center_lon"] for r in metadata]),
-    }
+    lats = np.array([r["center_lat"] for r in metadata])
+    lons = np.array([r["center_lon"] for r in metadata])
     model_names = [
         "terramind_v1_tiny",
         "terramind_v1_small",
@@ -224,44 +234,47 @@ def main():
 
             run_probe_args.extend(
                 [
-                    (latents_root, model_name, tgt_name,
-                     tgt, probe_name, layer, None, "none", control)
-                    for tgt_name, tgt in preds.items()
+                    (latents_root, model_name, lats, lons,
+                     probe_name, layer, None, "none", False, True)
                     for probe_name in probe_names
-                    for control in [False, True]
                 ]
             )
 
-            if layer == num_layers - 1 and model_name != "terramind_v1_tiny":
+            if layer == num_layers - 1:
+                # Add control runs
                 run_probe_args.extend(
                     [
-                        (latents_root, model_name, tgt_name, tgt,
-                         probe_name, layer, 192, proj, control)
-                        for tgt_name, tgt in preds.items()
+                        (latents_root, model_name, lats, lons,
+                         probe_name, layer, None, "none", True, True)
                         for probe_name in probe_names
-                        for proj in ["pca", "random"]
-                        for control in [False, True]
                     ]
                 )
 
-    test_earth_pred_args = [
-        (root[model_name][f"layer_{num_layers_dict[model_name] - 1}"],
-         model_name, preds["lat"], preds["lon"], probe_name, circular_encoding)
-        for model_name in model_names
-        for probe_name in probe_names
-        for circular_encoding in [False, True]
-    ]
+                # Add no circular encoding runs
+                run_probe_args.extend(
+                    [
+                        (latents_root, model_name, lats, lons,
+                         probe_name, layer, None, "none", False, False)
+                        for probe_name in probe_names
+                    ]
+                )
 
-    if id < len(run_probe_args):
-        res = run_probe(*run_probe_args[id])
+                if model_name != "terramind_v1_tiny":
+                    # Add PCA and random projection runs
+                    TINY_MODEL_DIM = 192
+                    run_probe_args.extend(
+                        [
+                            (latents_root, model_name, lats, lons, probe_name,
+                             layer, TINY_MODEL_DIM, proj, False, True)
+                            for probe_name in probe_names
+                            for proj in ["pca", "random"]
+                        ]
+                    )
 
-        with open(main_res_path, "wb") as f:
-            pickle.dump(res, f)
-    else:
-        res = test_earth_pred(*test_earth_pred_args[id - len(run_probe_args)])
+    res = run_probe(*run_probe_args[id])
 
-        with open(circ_enc_res_path, "wb") as f:
-            pickle.dump(res, f)
+    with open(res_path, "wb") as f:
+        pickle.dump(res, f)
 
 
 if __name__ == "__main__":
