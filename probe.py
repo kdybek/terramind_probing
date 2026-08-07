@@ -104,7 +104,8 @@ def run_probe(
         rng = np.random.default_rng(SEED)
         rng.shuffle(latents)
 
-    reg = get_probe(probe_name)
+    reg_lat = get_probe(probe_name)
+    reg_lon = get_probe(probe_name)
 
     cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
 
@@ -115,18 +116,16 @@ def run_probe(
         lons_train, lons_test = lons[train_idx], lons[test_idx]
 
         if circular_encoding:
-            train_data = np.column_stack([
-                lats_train,
+            lons_train = np.column_stack([
                 np.sin(np.radians(lons_train)),
                 np.cos(np.radians(lons_train))
             ])
-        else:
-            train_data = np.column_stack([lats_train, lons_train])
 
-        reg.fit(latents_train, train_data)
+        reg_lat.fit(latents_train, lats_train)
+        reg_lon.fit(latents_train, lons_train)
 
-        preds = reg.predict(latents_test)
-        lat_preds = preds[:, 0]
+        lat_preds = reg_lat.predict(latents_test)
+        lon_preds = reg_lon.predict(latents_test)
 
         r2_lat = r2_score(lats_test, lat_preds)
 
@@ -134,8 +133,8 @@ def run_probe(
             sin_lon_true = np.sin(np.radians(lons_test))
             cos_lon_true = np.cos(np.radians(lons_test))
 
-            r2_sin_lon = r2_score(sin_lon_true, preds[:, 1])
-            r2_cos_lon = r2_score(cos_lon_true, preds[:, 2])
+            r2_sin_lon = r2_score(sin_lon_true, lon_preds[:, 0])
+            r2_cos_lon = r2_score(cos_lon_true, lon_preds[:, 1])
 
             # Overall R2 for the 3-output target
             all_targets = np.column_stack([
@@ -143,13 +142,16 @@ def run_probe(
                 sin_lon_true,
                 cos_lon_true
             ])
-            r2_all = r2_score(all_targets, preds, multioutput="variance_weighted")
+            all_preds = np.column_stack([
+                lat_preds,
+                lon_preds[:, 0],
+                lon_preds[:, 1]
+            ])
+            r2_all = r2_score(all_targets, all_preds, multioutput="variance_weighted")
 
-            lon_preds = np.degrees(np.arctan2(preds[:, 1], preds[:, 2]))
+            lon_preds = np.degrees(np.arctan2(lon_preds[:, 0], lon_preds[:, 1]))
 
         else:
-            lon_preds = preds[:, 1]
-
             r2_lon = r2_score(lons_test, lon_preds)
 
             # Overall R2 for lat/lon
@@ -157,7 +159,11 @@ def run_probe(
                 lats_test,
                 lons_test
             ])
-            r2_all = r2_score(all_targets, preds, multioutput="variance_weighted")
+            all_preds = np.column_stack([
+                lat_preds,
+                lon_preds
+            ])
+            r2_all = r2_score(all_targets, all_preds, multioutput="variance_weighted")
 
         distances = compute_geodesic_distance(
             lats_test, lons_test, lat_preds, lon_preds
