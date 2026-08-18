@@ -27,11 +27,7 @@ def print_xgb_params(model, name):
 
     model.fit(X, y)
 
-    booster = model.get_booster()
-
-    print("booster:", booster.attributes())
-    print("model parameters:")
-    print(model.get_xgb_params())
+    print(model.get_booster().save_config())
 
 
 if __name__ == "__main__":
