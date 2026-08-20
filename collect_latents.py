@@ -12,7 +12,7 @@ import pickle
 import subprocess
 
 
-MODALITIES = ["S2L2A", "S2L1C", "S1GRD", "S1RTC", "DEM", "RGB", "NDVI", "LULC"]
+MODALITIES = ["S2L2A", "S2L1C", "S1GRD", "S1RTC", "DEM", "S2RGB", "NDVI", "LULC"]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATASET_PATH = "data/TerraMesh"
 VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
