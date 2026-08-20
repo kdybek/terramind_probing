@@ -81,7 +81,6 @@ def run_probe(
         layer,
         n_components,
         dim_reduction,
-        control,
         circular_encoding
 ):
     latents = np.asarray(latents_root[:])
@@ -99,10 +98,6 @@ def run_probe(
         latents = apply_random_projection(latents, n_components)
 
     n_components = latents.shape[1]
-
-    if control:
-        rng = np.random.default_rng(SEED)
-        rng.shuffle(latents)
 
     reg_lat = get_probe(probe_name)
     reg_lon = get_probe(probe_name)
@@ -175,7 +170,6 @@ def run_probe(
             "layer": layer,
             "n_components": n_components,
             "dim_reduction": dim_reduction,
-            "control": control,
             "circular_encoding": circular_encoding,
             "fold": i,
             "pred_error_km": np.mean(distances),
@@ -241,26 +235,17 @@ def main():
             run_probe_args.extend(
                 [
                     (latents_root, model_name, lats, lons,
-                     probe_name, layer, None, "none", False, True)
+                     probe_name, layer, None, "none", True)
                     for probe_name in probe_names
                 ]
             )
 
             if layer == num_layers - 1:
-                # Add control runs
-                run_probe_args.extend(
-                    [
-                        (latents_root, model_name, lats, lons,
-                         probe_name, layer, None, "none", True, True)
-                        for probe_name in probe_names
-                    ]
-                )
-
                 # Add no circular encoding runs
                 run_probe_args.extend(
                     [
                         (latents_root, model_name, lats, lons,
-                         probe_name, layer, None, "none", False, False)
+                         probe_name, layer, None, "none", False)
                         for probe_name in probe_names
                     ]
                 )
@@ -271,7 +256,7 @@ def main():
                     run_probe_args.extend(
                         [
                             (latents_root, model_name, lats, lons, probe_name,
-                             layer, TINY_MODEL_DIM, proj, False, True)
+                             layer, TINY_MODEL_DIM, proj, True)
                             for probe_name in probe_names
                             for proj in ["pca", "random"]
                         ]
