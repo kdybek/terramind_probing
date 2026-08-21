@@ -131,34 +131,10 @@ def run_probe(
             r2_sin_lon = r2_score(sin_lon_true, lon_preds[:, 0])
             r2_cos_lon = r2_score(cos_lon_true, lon_preds[:, 1])
 
-            # Overall R2 for the 3-output target
-            all_targets = np.column_stack([
-                lats_test,
-                sin_lon_true,
-                cos_lon_true
-            ])
-            all_preds = np.column_stack([
-                lat_preds,
-                lon_preds[:, 0],
-                lon_preds[:, 1]
-            ])
-            r2_all = r2_score(all_targets, all_preds, multioutput="variance_weighted")
-
             lon_preds = np.degrees(np.arctan2(lon_preds[:, 0], lon_preds[:, 1]))
 
         else:
             r2_lon = r2_score(lons_test, lon_preds)
-
-            # Overall R2 for lat/lon
-            all_targets = np.column_stack([
-                lats_test,
-                lons_test
-            ])
-            all_preds = np.column_stack([
-                lat_preds,
-                lon_preds
-            ])
-            r2_all = r2_score(all_targets, all_preds, multioutput="variance_weighted")
 
         distances = compute_geodesic_distance(
             lats_test, lons_test, lat_preds, lon_preds
@@ -174,7 +150,6 @@ def run_probe(
             "fold": i,
             "pred_error_km": np.mean(distances),
             "r2_lat": r2_lat,
-            "r2_all": r2_all,
         }
 
         if circular_encoding:
