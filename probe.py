@@ -5,13 +5,9 @@ import os
 import sys
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold
-from sklearn.metrics import r2_score
 from sklearn.pipeline import make_pipeline
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.neural_network import MLPRegressor
-from sklearn.random_projection import GaussianRandomProjection
-from sklearn.decomposition import PCA
-from xgboost import XGBRegressor
 
 
 DATA_DIR = "data"
@@ -19,39 +15,6 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-
-
-def apply_pca(latents, n_components):
-    scaler = StandardScaler()
-    latents = scaler.fit_transform(latents)
-    pca = PCA(n_components=n_components, random_state=SEED)
-    latents_pca = pca.fit_transform(latents)
-    return latents_pca
-
-
-def apply_random_projection(latents, n_components):
-    scaler = StandardScaler()
-    latents = scaler.fit_transform(latents)
-    rp = GaussianRandomProjection(n_components=n_components, random_state=SEED)
-    latents_rp = rp.fit_transform(latents)
-    return latents_rp
-
-
-def get_probe(probe_name):
-    if probe_name == "ridge":
-        return make_pipeline(
-            StandardScaler(),
-            RidgeCV()
-        )
-    elif probe_name == "xgboost":
-        return XGBRegressor(random_state=SEED)
-    elif probe_name == "mlp":
-        return make_pipeline(
-            StandardScaler(),
-            MLPRegressor(random_state=SEED),
-        )
-    else:
-        raise ValueError(f"Invalid probe name: {probe_name}")
 
 
 def compute_geodesic_distance(lat1, lon1, lat2, lon2):
@@ -72,99 +35,127 @@ def compute_geodesic_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 
+def encode_target(lats, lons, coordinate_encoding):
+    if coordinate_encoding == "none":
+        return np.column_stack((lats, lons))
+    elif coordinate_encoding == "spherical":
+        lat_rad = np.radians(lats)
+        lon_rad = np.radians(lons)
+        x = np.cos(lat_rad) * np.cos(lon_rad)
+        y = np.cos(lat_rad) * np.sin(lon_rad)
+        z = np.sin(lat_rad)
+        return np.column_stack((x, y, z))
+    else:
+        raise ValueError(f"Unknown coordinate encoding: {coordinate_encoding}")
+
+
+def decode_target(encoded, coordinate_encoding):
+    if coordinate_encoding == "none":
+        assert encoded.shape[1] == 2, "Expected 2D coordinates for 'none' encoding"
+        return encoded[:, 0], encoded[:, 1]
+    elif coordinate_encoding == "spherical":
+        assert encoded.shape[1] == 3, "Expected 3D coordinates for 'spherical' encoding"
+        x, y, z = encoded[:, 0], encoded[:, 1], encoded[:, 2]
+        lat_rad = np.arcsin(z)
+        lon_rad = np.arctan2(y, x)
+        return np.degrees(lat_rad), np.degrees(lon_rad)
+    else:
+        raise ValueError(f"Unknown coordinate encoding: {coordinate_encoding}")
+
+
+def add_interaction_features(latents, n_interactions, seed):
+    if n_interactions == 0:
+        return latents
+
+    rng = np.random.default_rng(seed)
+    _, n_features = latents.shape
+
+    # All (i,j) with i <= j
+    rows, cols = np.triu_indices(n_features)
+
+    idx = rng.choice(rows.size, size=n_interactions, replace=False)
+
+    interaction_features = (
+        latents[:, rows[idx]] *
+        latents[:, cols[idx]]
+    )
+
+    return np.hstack((latents, interaction_features))
+
+
 def run_probe(
         latents_root,
         model_name,
         lats,
         lons,
-        probe_name,
-        layer,
-        n_components,
-        dim_reduction,
-        circular_encoding
+        coordinate_encoding,
+        n_interactions,
 ):
     latents = np.asarray(latents_root[:])
 
-    assert dim_reduction in ["pca", "random", "none"], \
-        "dim_reduction must be one of 'pca', 'random', or 'none'"
-    assert not (dim_reduction != "none" and n_components is None), \
-        "n_components must be specified if dim_reduction is not 'none'"
-    assert probe_name in ["ridge", "xgboost", "mlp"], \
-        "probe_name must be one of 'ridge', 'xgboost', or 'mlp'"
+    outer_cv = KFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=0
+    )
 
-    if dim_reduction == "pca":
-        latents = apply_pca(latents, n_components)
-    elif dim_reduction == "random":
-        latents = apply_random_projection(latents, n_components)
+    model = make_pipeline(
+        StandardScaler(),
+        TransformedTargetRegressor(
+            regressor=RidgeCV(
+                alphas=np.logspace(-6, 5, 12),
+                cv=5
+            ),
+            transformer=StandardScaler()
+        )
+    )
 
-    n_components = latents.shape[1]
+    results = []
 
-    reg_lat = get_probe(probe_name)
-    reg_lon = get_probe(probe_name)
+    y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
-    cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
+    for interaction_seed in range(10):
 
-    entries = []
-    for i, (train_idx, test_idx) in enumerate(cv.split(latents)):
-        latents_train, latents_test = latents[train_idx], latents[test_idx]
-        lats_train, lats_test = lats[train_idx], lats[test_idx]
-        lons_train, lons_test = lons[train_idx], lons[test_idx]
-
-        if circular_encoding:
-            lons_train = np.column_stack([
-                np.sin(np.radians(lons_train)),
-                np.cos(np.radians(lons_train))
-            ])
-
-        reg_lat.fit(latents_train, lats_train)
-        reg_lon.fit(latents_train, lons_train)
-
-        lat_preds = reg_lat.predict(latents_test)
-        lon_preds = reg_lon.predict(latents_test)
-
-        r2_lat = r2_score(lats_test, lat_preds)
-
-        if circular_encoding:
-            sin_lon_true = np.sin(np.radians(lons_test))
-            cos_lon_true = np.cos(np.radians(lons_test))
-
-            r2_sin_lon = r2_score(sin_lon_true, lon_preds[:, 0])
-            r2_cos_lon = r2_score(cos_lon_true, lon_preds[:, 1])
-
-            lon_preds = np.degrees(np.arctan2(lon_preds[:, 0], lon_preds[:, 1]))
-
-        else:
-            r2_lon = r2_score(lons_test, lon_preds)
-
-        distances = compute_geodesic_distance(
-            lats_test, lons_test, lat_preds, lon_preds
+        X = add_interaction_features(
+            latents,
+            n_interactions=n_interactions,
+            seed=interaction_seed
         )
 
-        entry = {
-            "model": model_name,
-            "probe": probe_name,
-            "layer": layer,
-            "n_components": n_components,
-            "dim_reduction": dim_reduction,
-            "circular_encoding": circular_encoding,
-            "fold": i,
-            "pred_error_km": np.mean(distances),
-            "r2_lat": r2_lat,
-        }
+        fold_scores = []
 
-        if circular_encoding:
-            entry.update({
-                "r2_sin_lon": r2_sin_lon,
-                "r2_cos_lon": r2_cos_lon,
-            })
-        else:
-            entry.update({
-                "r2_lon": r2_lon,
-            })
+        for train_idx, val_idx in outer_cv.split(X):
 
-        entries.append(entry)
+            X_train, X_val = X[train_idx], X[val_idx]
+            y_train = y[train_idx]
+            lats_val = lats[val_idx]
+            lons_val = lons[val_idx]
 
-    return entries
+            model.fit(X_train, y_train)
+
+            pred_encoded = model.predict(X_val)
+
+            lats_pred, lons_pred = decode_target(
+                pred_encoded, coordinate_encoding=coordinate_encoding
+            )
+
+            distances = [
+                compute_geodesic_distance(lat1, lon1, lat2, lon2)
+                for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred, lons_pred)
+            ]
+
+            fold_scores.append(np.mean(distances))
+
+        results.append({
+            "interaction_seed": interaction_seed,
+            "n_interactions": n_interactions,
+            "model_name": model_name,
+            "coordinate_encoding": coordinate_encoding,
+            "mean_pred_err_km": np.mean(fold_scores),
+            "std_pred_err_km": np.std(fold_scores),
+        })
+
+    return results
 
 
 def main():
@@ -199,43 +190,22 @@ def main():
         "terramind_v1_base": 12,
         "terramind_v1_large": 24,
     }
-    probe_names = ["ridge", "xgboost", "mlp"]
 
     run_probe_args = []
     for model_name in model_names:
         num_layers = num_layers_dict[model_name]
-        for layer in range(num_layers):
-            latents_root = root[model_name][f"layer_{layer}"]
+        latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-            run_probe_args.extend(
-                [
-                    (latents_root, model_name, lats, lons,
-                     probe_name, layer, None, "none", True)
-                    for probe_name in probe_names
-                ]
-            )
-
-            if layer == num_layers - 1:
-                # Add no circular encoding runs
-                run_probe_args.extend(
-                    [
-                        (latents_root, model_name, lats, lons,
-                         probe_name, layer, None, "none", False)
-                        for probe_name in probe_names
-                    ]
-                )
-
-                if model_name != "terramind_v1_tiny":
-                    # Add PCA and random projection runs
-                    TINY_MODEL_DIM = 192
-                    run_probe_args.extend(
-                        [
-                            (latents_root, model_name, lats, lons, probe_name,
-                             layer, TINY_MODEL_DIM, proj, True)
-                            for probe_name in probe_names
-                            for proj in ["pca", "random"]
-                        ]
-                    )
+        for coordinate_encoding in ["none", "spherical"]:
+            for n_interactions in [0, 10, 50, 100, 500, 1000]:
+                run_probe_args.append((
+                    latents_root,
+                    model_name,
+                    lats,
+                    lons,
+                    coordinate_encoding,
+                    n_interactions,
+                ))
 
     res = run_probe(*run_probe_args[id])
 
