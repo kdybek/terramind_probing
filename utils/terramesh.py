@@ -34,16 +34,16 @@ from webdataset.handlers import warn_and_continue
 # Definition of all shard files in TerraMesh
 split_files = {
     "ssl4eos12": {
-        "train": ["ssl4eos12_shard_{000794..000889}.tar"],
-        "val": ["ssl4eos12_shard_000009.tar"],
+        "train": ["ssl4eos12_shard_{000001..000096}.tar"],
+        "val": ["ssl4eos12_shard_{000001..000009}.tar"],
     },
     "majortom": {
-        "train": ["majortom_shard_{000001..000793}.tar"],
-        "val": ["majortom_shard_{000001..000008}.tar"],
+        "train": ["majortom_shard_{000001..000798}.tar"],
+        "val": ["majortom_shard_{000001..000081}.tar"],
     },
     "combined": {
-        "train": ["majortom_shard_{000001..000793}.tar", "ssl4eos12_shard_{000794..000889}.tar"],
-        "val": ["majortom_shard_{000001..000008}.tar", "ssl4eos12_shard_000009.tar"],
+        "train": ["majortom_shard_{000001..000798}.tar", "ssl4eos12_shard_{000001..000096}.tar"],
+        "val": ["majortom_shard_{000001..000081}.tar", "ssl4eos12_shard_{000001..000009}.tar"],
     }
 }
 
