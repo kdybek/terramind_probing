@@ -15,7 +15,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-N_INTERACTION_SAMPLES = 50
+N_INTERACTION_SAMPLES = 30
 
 
 def compute_geodesic_distance(lat1, lon1, lat2, lon2):
@@ -130,7 +130,7 @@ def run_probe(
         StandardScaler(),
         TransformedTargetRegressor(
             regressor=RidgeCV(
-                alphas=np.logspace(-2, 10, 13)
+                alphas=np.logspace(-2, 8, 11)
             ),
             transformer=StandardScaler()
         )
