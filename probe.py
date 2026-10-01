@@ -40,14 +40,14 @@ def encode_target(lats, lons, coordinate_encoding):
     if coordinate_encoding == "none":
         return np.column_stack((lats, lons))
     elif coordinate_encoding == "sincos":
-        lat = np.radians(lat)
-        lon = np.radians(lon)
+        lat_rad = np.radians(lats)
+        lon_rad = np.radians(lons)
 
         return np.column_stack([
-            np.sin(lat),
-            np.cos(lat),
-            np.sin(lon),
-            np.cos(lon),
+            np.sin(lat_rad),
+            np.cos(lat_rad),
+            np.sin(lon_rad),
+            np.cos(lon_rad),
         ])
     elif coordinate_encoding == "spherical":
         lat_rad = np.radians(lats)
@@ -130,8 +130,7 @@ def run_probe(
         StandardScaler(),
         TransformedTargetRegressor(
             regressor=RidgeCV(
-                alphas=np.logspace(-6, 5, 12),
-                cv=5
+                alphas=np.logspace(-2, 10, 13)
             ),
             transformer=StandardScaler()
         )
@@ -224,7 +223,7 @@ def main():
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
         for coordinate_encoding in ["none", "sincos", "spherical"]:
-            for n_interactions in [0, 10, 50, 100, 500, 1000, 5000, 10000]:
+            for n_interactions in [0, 10, 50, 100, 500, 1000]:
                 run_probe_args.append((
                     latents_root,
                     model_name,
