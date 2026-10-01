@@ -15,6 +15,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
+N_INTERACTION_SAMPLES = 50
 
 
 def compute_geodesic_distance(lat1, lon1, lat2, lon2):
@@ -38,6 +39,16 @@ def compute_geodesic_distance(lat1, lon1, lat2, lon2):
 def encode_target(lats, lons, coordinate_encoding):
     if coordinate_encoding == "none":
         return np.column_stack((lats, lons))
+    elif coordinate_encoding == "sincos":
+        lat = np.radians(lat)
+        lon = np.radians(lon)
+
+        return np.column_stack([
+            np.sin(lat),
+            np.cos(lat),
+            np.sin(lon),
+            np.cos(lon),
+        ])
     elif coordinate_encoding == "spherical":
         lat_rad = np.radians(lats)
         lon_rad = np.radians(lons)
@@ -53,10 +64,23 @@ def decode_target(encoded, coordinate_encoding):
     if coordinate_encoding == "none":
         assert encoded.shape[1] == 2, "Expected 2D coordinates for 'none' encoding"
         return encoded[:, 0], encoded[:, 1]
+    elif coordinate_encoding == "sincos":
+        assert encoded.shape[1] == 4, "Expected 4D coordinates for 'sincos' encoding"
+        lat_rad = np.arctan2(encoded[:,0], encoded[:,1])
+        lon_rad = np.arctan2(encoded[:,2], encoded[:,3])
+
+        return np.degrees(lat_rad), np.degrees(lon_rad)
     elif coordinate_encoding == "spherical":
         assert encoded.shape[1] == 3, "Expected 3D coordinates for 'spherical' encoding"
         x, y, z = encoded[:, 0], encoded[:, 1], encoded[:, 2]
-        lat_rad = np.arcsin(z)
+
+        # Normalize the vector to ensure it's on the unit sphere
+        norm = np.sqrt(x**2 + y**2 + z**2)
+        x /= norm
+        y /= norm
+        z /= norm
+
+        lat_rad = np.arcsin(np.clip(z, -1.0, 1.0))  # Clip to avoid numerical issues
         lon_rad = np.arctan2(y, x)
         return np.degrees(lat_rad), np.degrees(lon_rad)
     else:
@@ -69,6 +93,9 @@ def add_interaction_features(latents, n_interactions, seed):
 
     rng = np.random.default_rng(seed)
     _, n_features = latents.shape
+
+    assert n_interactions <= (n_features * (n_features + 1)) // 2, \
+        "n_interactions exceeds the number of possible unique interactions"
 
     # All (i,j) with i <= j
     rows, cols = np.triu_indices(n_features)
@@ -96,7 +123,7 @@ def run_probe(
     outer_cv = KFold(
         n_splits=5,
         shuffle=True,
-        random_state=0
+        random_state=SEED
     )
 
     model = make_pipeline(
@@ -114,7 +141,7 @@ def run_probe(
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
-    for interaction_seed in range(10):
+    for interaction_seed in range(N_INTERACTION_SAMPLES):
 
         X = add_interaction_features(
             latents,
@@ -163,11 +190,11 @@ def main():
         print("Usage: python probe.py <run_id>")
         sys.exit(1)
 
-    id = int(sys.argv[1])
+    run_id = int(sys.argv[1])
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    res_path = os.path.join(RESULTS_DIR, f"{id}.pkl")
+    res_path = os.path.join(RESULTS_DIR, f"{run_id}.pkl")
     if os.path.exists(res_path):
         sys.exit(0)
 
@@ -196,8 +223,8 @@ def main():
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["none", "spherical"]:
-            for n_interactions in [0, 10, 50, 100, 500, 1000]:
+        for coordinate_encoding in ["none", "sincos", "spherical"]:
+            for n_interactions in [0, 10, 50, 100, 500, 1000, 5000, 10000]:
                 run_probe_args.append((
                     latents_root,
                     model_name,
@@ -207,7 +234,7 @@ def main():
                     n_interactions,
                 ))
 
-    res = run_probe(*run_probe_args[id])
+    res = run_probe(*run_probe_args[run_id])
 
     with open(res_path, "wb") as f:
         pickle.dump(res, f)
