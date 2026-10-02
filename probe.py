@@ -361,13 +361,13 @@ def main():
     }
 
     run_probe_args = []
-    for W_rank in [None, 2]:
-        for model_name in model_names:
-            num_layers = num_layers_dict[model_name]
-            latents_root = root[model_name][f"layer_{num_layers - 1}"]
+    for model_name in model_names:
+        num_layers = num_layers_dict[model_name]
+        latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-            for coordinate_encoding in ["none", "sincos", "spherical"]:
-                for n_interactions in [0, 10, 50, 100, 500, 1000]:
+        for coordinate_encoding in ["none", "sincos", "spherical"]:
+            for n_interactions in [0, 10, 50, 100, 500, 1000]:
+                for W_rank in [None, 2]:
                     run_probe_args.append((
                         latents_root,
                         model_name,
