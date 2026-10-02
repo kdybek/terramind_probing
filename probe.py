@@ -3,11 +3,12 @@ import zarr
 import pickle
 import os
 import sys
-from sklearn.linear_model import RidgeCV
-from sklearn.model_selection import KFold
+from sklearn.linear_model import Ridge
 from sklearn.pipeline import make_pipeline
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.model_selection import GridSearchCV, GroupKFold
 
 
 DATA_DIR = "data"
@@ -16,6 +17,30 @@ METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 N_INTERACTION_SAMPLES = 30
+
+
+def create_spatial_groups(
+    lats,
+    lons,
+    lat_bin_size=10,
+    lon_bin_size=10
+):
+
+    lat_bins = np.floor(
+        (lats + 90) / lat_bin_size
+    )
+
+    lon_bins = np.floor(
+        (lons + 180) / lon_bin_size
+    )
+
+    groups = (
+        lat_bins.astype(int) * 1000
+        +
+        lon_bins.astype(int)
+    )
+
+    return groups
 
 
 def compute_geodesic_distance(lat1, lon1, lat2, lon2):
@@ -110,6 +135,97 @@ def add_interaction_features(latents, n_interactions, seed):
     return np.hstack((latents, interaction_features))
 
 
+def svd_RRR(X, Y, rnk, lambda_=0):
+    """
+        Perform Ridge Regularized Reduced Rank Regression (RRR) using SVD.
+        Parameters:
+            X : np.ndarray
+                Input data matrix (n_samples, n_input_neurons).
+            Y : np.ndarray
+                Output data matrix (n_samples, n_output_neurons).
+            rnk : int
+                Dimensionaility of communication
+            lambda_ : float
+                Regularization parameter (default is 0 for no regularization).
+        Returns:
+            w0 : np.ndarray
+                Estimate of the communication strength (n_input_neurons, n_output_neurons).
+            urrr : np.ndarray
+                Input axes (n_input_neurons, rnk).
+            vrrr : np.ndarray
+                Output axes, orthonormal (n_output_neurons, rnk).
+    """
+    # Check if X and Y are 2D arrays
+    # Ridge regularization
+    XX = X.T @ X + lambda_ * np.eye(X.shape[1])
+
+    # Least squares estimate with ridge
+    if np.linalg.cond(XX) < 1e10:
+        wridge = np.linalg.solve(XX, X.T @ Y)
+    else:
+        wridge = np.linalg.pinv(XX) @ (X.T @ Y)
+
+    # SVD of relevant matrix
+    _, _, vrrr = np.linalg.svd(Y.T @ X @ wridge)
+
+    # Get the top 'rnk' components
+    vrrr = vrrr[:rnk, :].T   # shape: (features, rnk)
+    urrr = wridge @ vrrr    # shape: (features, rnk)
+
+    # Construct full RRR estimate
+    w0 = urrr @ vrrr.T
+    vrrr = vrrr.T  # for compatibility with original code's return
+
+    return w0, urrr, vrrr
+
+
+class ReducedRankRidge(
+    BaseEstimator,
+    RegressorMixin
+):
+    """
+    Ridge reduced-rank regression estimator
+    using the svd_RRR solver.
+    """
+
+    def __init__(
+        self,
+        rank=2,
+        alpha=1.0
+    ):
+        self.rank = rank
+        self.alpha = alpha
+
+    def fit(self, X, y):
+        X = np.asarray(X)
+        y = np.asarray(y)
+
+        W, U, V = svd_RRR(
+            X,
+            y,
+            rnk=self.rank,
+            lambda_=self.alpha
+        )
+
+        # sklearn convention:
+        #
+        # Ridge.coef_:
+        # (n_targets, n_features)
+        #
+        self.coef_ = W.T
+
+        self.input_axes_ = U
+        self.output_axes_ = V
+
+        self.n_features_in_ = X.shape[1]
+
+        return self
+
+    def predict(self, X):
+        X = np.asarray(X)
+        return X @ self.coef_.T
+
+
 def run_probe(
         latents_root,
         model_name,
@@ -117,21 +233,46 @@ def run_probe(
         lons,
         coordinate_encoding,
         n_interactions,
+        W_rank
 ):
     latents = np.asarray(latents_root[:])
 
-    outer_cv = KFold(
+    groups = create_spatial_groups(lats, lons)
+
+    outer_cv = GroupKFold(
         n_splits=5,
         shuffle=True,
         random_state=SEED
     )
+    inner_cv = GroupKFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=SEED + 1
+    )
+
+    alphas = np.logspace(-2, 8, 11)
+
+    if W_rank is not None:
+        ridge_cv = GridSearchCV(
+            estimator=ReducedRankRidge(rank=W_rank),
+            param_grid={"alpha": alphas},
+            cv=inner_cv,
+            scoring="neg_mean_squared_error",
+            n_jobs=-1
+        )
+    else:
+        ridge_cv = GridSearchCV(
+            estimator=Ridge(),
+            param_grid={"alpha": alphas},
+            cv=inner_cv,
+            scoring="neg_mean_squared_error",
+            n_jobs=-1
+        )
 
     model = make_pipeline(
         StandardScaler(),
         TransformedTargetRegressor(
-            regressor=RidgeCV(
-                alphas=np.logspace(-2, 8, 11)
-            ),
+            regressor=ridge_cv,
             transformer=StandardScaler()
         )
     )
@@ -150,14 +291,15 @@ def run_probe(
 
         fold_scores = []
 
-        for train_idx, val_idx in outer_cv.split(X):
+        for train_idx, val_idx in outer_cv.split(X, y, groups=groups):
 
             X_train, X_val = X[train_idx], X[val_idx]
             y_train = y[train_idx]
+            groups_train = groups[train_idx]
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
-            model.fit(X_train, y_train)
+            model.fit(X_train, y_train, groups=groups_train)
 
             pred_encoded = model.predict(X_val)
 
@@ -177,6 +319,7 @@ def run_probe(
             "n_interactions": n_interactions,
             "model_name": model_name,
             "coordinate_encoding": coordinate_encoding,
+            "W_rank": W_rank,
             "mean_pred_err_km": np.mean(fold_scores),
             "std_pred_err_km": np.std(fold_scores),
         })
@@ -218,20 +361,22 @@ def main():
     }
 
     run_probe_args = []
-    for model_name in model_names:
-        num_layers = num_layers_dict[model_name]
-        latents_root = root[model_name][f"layer_{num_layers - 1}"]
+    for W_rank in [None, 2]:
+        for model_name in model_names:
+            num_layers = num_layers_dict[model_name]
+            latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["none", "sincos", "spherical"]:
-            for n_interactions in [0, 10, 50, 100, 500, 1000]:
-                run_probe_args.append((
-                    latents_root,
-                    model_name,
-                    lats,
-                    lons,
-                    coordinate_encoding,
-                    n_interactions,
-                ))
+            for coordinate_encoding in ["none", "sincos", "spherical"]:
+                for n_interactions in [0, 10, 50, 100, 500, 1000]:
+                    run_probe_args.append((
+                        latents_root,
+                        model_name,
+                        lats,
+                        lons,
+                        coordinate_encoding,
+                        n_interactions,
+                        W_rank
+                    ))
 
     res = run_probe(*run_probe_args[run_id])
 
