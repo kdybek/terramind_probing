@@ -244,7 +244,7 @@ def run_probe(
         random_state=SEED
     )
     inner_cv = GroupKFold(
-        n_splits=5,
+        n_splits=3,
         shuffle=True,
         random_state=SEED + 1
     )
