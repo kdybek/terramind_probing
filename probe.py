@@ -4,8 +4,7 @@ import pickle
 import os
 import sys
 from sklearn.linear_model import Ridge
-from sklearn.pipeline import make_pipeline
-from sklearn.compose import TransformedTargetRegressor
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import GridSearchCV, GroupKFold
@@ -269,13 +268,12 @@ def run_probe(
             n_jobs=-1
         )
 
-    model = make_pipeline(
-        StandardScaler(),
-        TransformedTargetRegressor(
-            regressor=ridge_cv,
-            transformer=StandardScaler()
-        )
-    )
+    model = Pipeline([
+        ("x_scaler", StandardScaler()),
+        ("ridge", ridge_cv)
+    ])
+    y_scaler = StandardScaler()
+
 
     results = []
 
@@ -299,9 +297,12 @@ def run_probe(
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
-            model.fit(X_train, y_train, groups=groups_train)
+            y_train_scaled = y_scaler.fit_transform(y_train)
 
-            pred_encoded = model.predict(X_val)
+            model.fit(X_train, y_train_scaled, ridge__groups=groups_train)
+
+            pred_encoded_scaled = model.predict(X_val)
+            pred_encoded = y_scaler.inverse_transform(pred_encoded_scaled)
 
             lats_pred, lons_pred = decode_target(
                 pred_encoded, coordinate_encoding=coordinate_encoding
