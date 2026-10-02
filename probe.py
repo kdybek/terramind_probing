@@ -190,27 +190,34 @@ class ReducedRankRidge(
     def __init__(
         self,
         rank=2,
-        alpha=1.0
+        alpha=1.0,
+        fit_intercept=True
     ):
         self.rank = rank
         self.alpha = alpha
+        self.fit_intercept = fit_intercept
 
     def fit(self, X, y):
         X = np.asarray(X)
         y = np.asarray(y)
 
+        if self.fit_intercept:
+            self.X_mean_ = X.mean(axis=0)
+            self.y_mean_ = y.mean(axis=0)
+
+            Xc = X - self.X_mean_
+            yc = y - self.y_mean_
+        else:
+            Xc = X
+            yc = y
+
         W, U, V = svd_RRR(
-            X,
-            y,
+            Xc,
+            yc,
             rnk=self.rank,
             lambda_=self.alpha
         )
 
-        # sklearn convention:
-        #
-        # Ridge.coef_:
-        # (n_targets, n_features)
-        #
         self.coef_ = W.T
 
         self.input_axes_ = U
@@ -218,11 +225,17 @@ class ReducedRankRidge(
 
         self.n_features_in_ = X.shape[1]
 
+        # Recover intercept
+        if self.fit_intercept:
+            self.intercept_ = self.y_mean_ - self.X_mean_ @ W
+        else:
+            self.intercept_ = np.zeros(y.shape[1])
+
         return self
 
     def predict(self, X):
         X = np.asarray(X)
-        return X @ self.coef_.T
+        return X @ self.coef_.T + self.intercept_
 
 
 def run_probe(
