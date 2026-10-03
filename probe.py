@@ -15,7 +15,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-N_INTERACTION_SAMPLES = 30
+N_INTERACTION_SAMPLES = 20
 
 
 def create_spatial_groups(
@@ -260,7 +260,7 @@ class MyRidge(
         y_scaled = self.y_scaler_.fit_transform(y)
 
         inner_cv = GroupKFold(
-            n_splits=3,
+            n_splits=2,
             shuffle=True,
             random_state=SEED + 1
         )
@@ -301,7 +301,7 @@ def run_probe(
     groups = create_spatial_groups(lats, lons)
 
     outer_cv = GroupKFold(
-        n_splits=5,
+        n_splits=3,
         shuffle=True,
         random_state=SEED
     )
