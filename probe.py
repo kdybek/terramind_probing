@@ -248,9 +248,9 @@ class MyRidge(
     """
     A custom Ridge regression estimator.
     """
-    def __init__(self, alphas):
+    def __init__(self, alphas, groups):
         self.alphas = alphas
-        self.groups = None
+        self.groups = groups
 
     def fit(self, X, y):
         self.x_scaler_ = StandardScaler()
@@ -306,8 +306,6 @@ def run_probe(
         random_state=SEED
     )
 
-    model = MyRidge(alphas=np.logspace(-2, 8, 11))
-
     results = []
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
@@ -323,7 +321,7 @@ def run_probe(
             lons_val = lons[val_idx]
 
             # This is a workaround to pass the groups to the model during fitting
-            model.groups = groups_train
+            model = MyRidge(alphas=np.logspace(-2, 8, 11), groups=groups_train)
 
             if reduced_dim is not None and reduced_dim < X_train.shape[1]:
                 selector = RFE(estimator=model, n_features_to_select=reduced_dim, step=0.35)
@@ -407,7 +405,7 @@ def main():
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["none", "sincos", "spherical"]:
+        for coordinate_encoding in ["none"]:
             for hessian_frac in np.linspace(0.0, 0.1, 6):
                 run_probe_args.append((
                     latents_root,
