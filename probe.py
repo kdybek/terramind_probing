@@ -272,7 +272,7 @@ class MyRidge(
             scoring="neg_mean_squared_error",
             n_jobs=-1
         )
-        self.cv_.fit(X_scaled, y_scaled, groups=self.groups)
+        self.cv_.fit(X_scaled, y_scaled, groups=self.groups.copy())
 
         self.model_ = self.cv_.best_estimator_
         self.coef_ = self.model_.coef_
