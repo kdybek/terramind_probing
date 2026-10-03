@@ -4,11 +4,10 @@ import pickle
 import os
 import sys
 from sklearn.linear_model import Ridge
-from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import RFE
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import GridSearchCV, GroupKFold
-from sklearn.decomposition import PCA
 
 
 DATA_DIR = "data"
@@ -242,6 +241,52 @@ class ReducedRankRidge(
         return X @ self.coef_.T + self.intercept_
 
 
+class MyRidge(
+    BaseEstimator,
+    RegressorMixin
+):
+    """
+    A custom Ridge regression estimator.
+    """
+    def __init__(self, alphas):
+        self.alphas = alphas
+        self.groups = None
+
+    def fit(self, X, y):
+        self.x_scaler_ = StandardScaler()
+        self.y_scaler_ = StandardScaler()
+
+        X_scaled = self.x_scaler_.fit_transform(X)
+        y_scaled = self.y_scaler_.fit_transform(y)
+
+        inner_cv = GroupKFold(
+            n_splits=3,
+            shuffle=True,
+            random_state=SEED + 1
+        )
+
+        self.cv_ = GridSearchCV(
+            estimator=Ridge(),
+            param_grid={"alpha": self.alphas},
+            cv=inner_cv,
+            scoring="neg_mean_squared_error",
+            n_jobs=-1
+        )
+        self.cv_.fit(X_scaled, y_scaled, groups=self.groups)
+
+        self.model_ = self.cv_.best_estimator_
+        self.coef_ = self.model_.coef_
+
+        return self
+
+    def predict(self, X):
+        X_scaled = self.x_scaler_.transform(X)
+
+        y_scaled = self.model_.predict(X_scaled)
+
+        return self.y_scaler_.inverse_transform(y_scaled)
+
+
 def run_probe(
         latents_root,
         model_name,
@@ -249,8 +294,7 @@ def run_probe(
         lons,
         coordinate_encoding,
         hessian_frac,
-        W_rank,
-        pca_dim
+        reduced_dim
 ):
     latents = np.asarray(latents_root[:])
 
@@ -261,35 +305,8 @@ def run_probe(
         shuffle=True,
         random_state=SEED
     )
-    inner_cv = GroupKFold(
-        n_splits=3,
-        shuffle=True,
-        random_state=SEED + 1
-    )
 
-    alphas = np.logspace(-2, 8, 11)
-
-    if W_rank is not None:
-        ridge_cv = GridSearchCV(
-            estimator=ReducedRankRidge(rank=W_rank),
-            param_grid={"alpha": alphas},
-            cv=inner_cv,
-            scoring="neg_mean_squared_error",
-            n_jobs=-1
-        )
-    else:
-        ridge_cv = GridSearchCV(
-            estimator=Ridge(),
-            param_grid={"alpha": alphas},
-            cv=inner_cv,
-            scoring="neg_mean_squared_error",
-            n_jobs=-1
-        )
-
-    model = Pipeline([
-        ("x_scaler", StandardScaler()),
-        ("ridge", ridge_cv)
-    ])
+    model = MyRidge(alphas=np.logspace(-2, 8, 11))
 
     results = []
 
@@ -305,13 +322,13 @@ def run_probe(
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
-            if pca_dim is not None and pca_dim < X_train.shape[1]:
-                scaler = StandardScaler()
-                X_train = scaler.fit_transform(X_train)
-                X_val = scaler.transform(X_val)
-                pca = PCA(n_components=pca_dim, random_state=SEED)
-                X_train = pca.fit_transform(X_train)
-                X_val = pca.transform(X_val)
+            # This is a workaround to pass the groups to the model during fitting
+            model.groups = groups_train
+
+            if reduced_dim is not None and reduced_dim < X_train.shape[1]:
+                selector = RFE(estimator=model, n_features_to_select=reduced_dim, step=0.35)
+                X_train = selector.fit_transform(X_train, y_train)
+                X_val = selector.transform(X_val)
 
             len_X_train = len(X_train)
 
@@ -324,13 +341,9 @@ def run_probe(
             X_train = X_all[:len_X_train]
             X_val = X_all[len_X_train:]
 
-            y_scaler = StandardScaler()
-            y_train_scaled = y_scaler.fit_transform(y_train)
+            model.fit(X_train, y_train)
 
-            model.fit(X_train, y_train_scaled, ridge__groups=groups_train)
-
-            pred_encoded_scaled = model.predict(X_val)
-            pred_encoded = y_scaler.inverse_transform(pred_encoded_scaled)
+            pred_encoded = model.predict(X_val)
 
             lats_pred, lons_pred = decode_target(
                 pred_encoded, coordinate_encoding=coordinate_encoding
@@ -346,10 +359,9 @@ def run_probe(
         results.append({
             "interaction_seed": interaction_seed,
             "hessian_frac": hessian_frac,
-            "pca_dim": pca_dim,
+            "reduced_dim": reduced_dim,
             "model_name": model_name,
             "coordinate_encoding": coordinate_encoding,
-            "W_rank": W_rank,
             "mean_pred_err_km": np.mean(fold_scores),
             "std_pred_err_km": np.std(fold_scores),
         })
@@ -397,17 +409,15 @@ def main():
 
         for coordinate_encoding in ["none", "sincos", "spherical"]:
             for hessian_frac in np.linspace(0.0, 0.1, 6):
-                for W_rank in [None]:
-                    run_probe_args.append((
-                        latents_root,
-                        model_name,
-                        lats,
-                        lons,
-                        coordinate_encoding,
-                        hessian_frac,
-                        W_rank,
-                        192
-                    ))
+                run_probe_args.append((
+                    latents_root,
+                    model_name,
+                    lats,
+                    lons,
+                    coordinate_encoding,
+                    hessian_frac,
+                    192
+                ))
 
     res = run_probe(*run_probe_args[run_id])
 
