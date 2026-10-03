@@ -8,6 +8,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import GridSearchCV, GroupKFold
+from sklearn.decomposition import PCA
 
 
 DATA_DIR = "data"
@@ -111,12 +112,15 @@ def decode_target(encoded, coordinate_encoding):
         raise ValueError(f"Unknown coordinate encoding: {coordinate_encoding}")
 
 
-def add_interaction_features(latents, n_interactions, seed):
-    if n_interactions == 0:
+
+def add_interaction_features(latents, hessian_frac, seed):
+    if hessian_frac == 0.0:
         return latents
 
     rng = np.random.default_rng(seed)
     _, n_features = latents.shape
+
+    n_interactions = round(hessian_frac * (n_features * (n_features + 1)) // 2)
 
     assert n_interactions <= (n_features * (n_features + 1)) // 2, \
         "n_interactions exceeds the number of possible unique interactions"
@@ -244,8 +248,9 @@ def run_probe(
         lats,
         lons,
         coordinate_encoding,
-        n_interactions,
-        W_rank
+        hessian_frac,
+        W_rank,
+        pca_dim
 ):
     latents = np.asarray(latents_root[:])
 
@@ -285,31 +290,41 @@ def run_probe(
         ("x_scaler", StandardScaler()),
         ("ridge", ridge_cv)
     ])
-    y_scaler = StandardScaler()
-
 
     results = []
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
     for interaction_seed in range(N_INTERACTION_SAMPLES):
-
-        X = add_interaction_features(
-            latents,
-            n_interactions=n_interactions,
-            seed=interaction_seed
-        )
-
         fold_scores = []
+        for train_idx, val_idx in outer_cv.split(latents, y, groups=groups):
 
-        for train_idx, val_idx in outer_cv.split(X, y, groups=groups):
-
-            X_train, X_val = X[train_idx], X[val_idx]
+            X_train, X_val = latents[train_idx], latents[val_idx]
             y_train = y[train_idx]
             groups_train = groups[train_idx]
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
+            if pca_dim is not None and pca_dim < X_train.shape[1]:
+                scaler = StandardScaler()
+                X_train = scaler.fit_transform(X_train)
+                X_val = scaler.transform(X_val)
+                pca = PCA(n_components=pca_dim, random_state=SEED)
+                X_train = pca.fit_transform(X_train)
+                X_val = pca.transform(X_val)
+
+            len_X_train = len(X_train)
+
+            X_all = np.vstack((X_train, X_val))
+            X_all = add_interaction_features(
+                X_all,
+                hessian_frac=hessian_frac,
+                seed=interaction_seed
+            )
+            X_train = X_all[:len_X_train]
+            X_val = X_all[len_X_train:]
+
+            y_scaler = StandardScaler()
             y_train_scaled = y_scaler.fit_transform(y_train)
 
             model.fit(X_train, y_train_scaled, ridge__groups=groups_train)
@@ -330,7 +345,8 @@ def run_probe(
 
         results.append({
             "interaction_seed": interaction_seed,
-            "n_interactions": n_interactions,
+            "hessian_frac": hessian_frac,
+            "pca_dim": pca_dim,
             "model_name": model_name,
             "coordinate_encoding": coordinate_encoding,
             "W_rank": W_rank,
@@ -380,16 +396,17 @@ def main():
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
         for coordinate_encoding in ["none", "sincos", "spherical"]:
-            for n_interactions in [0, 10, 50, 100, 500, 1000]:
-                for W_rank in [None, 2]:
+            for hessian_frac in np.linspace(0.0, 0.1, 6):
+                for W_rank in [None]:
                     run_probe_args.append((
                         latents_root,
                         model_name,
                         lats,
                         lons,
                         coordinate_encoding,
-                        n_interactions,
-                        W_rank
+                        hessian_frac,
+                        W_rank,
+                        192
                     ))
 
     res = run_probe(*run_probe_args[run_id])
