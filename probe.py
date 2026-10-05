@@ -4,9 +4,7 @@ import pickle
 import os
 import sys
 import myfm
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit
-from sklearn.multioutput import MultiOutputRegressor
+from sklearn.model_selection import GroupShuffleSplit
 
 
 DATA_DIR = "data"
@@ -106,6 +104,28 @@ def decode_target(encoded, coordinate_encoding):
         raise ValueError(f"Unknown coordinate encoding: {coordinate_encoding}")
 
 
+class MyMultiOutputRegressor:
+    def __init__(self, estimator_factory):
+        self.estimator_factory = estimator_factory
+        self.estimators_ = []
+
+    def fit(self, X, y):
+        self.estimators_ = []
+
+        for i in range(y.shape[1]):
+            estimator = self.estimator_factory()
+            estimator.fit(X, y[:, i])
+            self.estimators_.append(estimator)
+
+        return self
+
+    def predict(self, X):
+        return np.stack(
+            [est.predict(X) for est in self.estimators_],
+            axis=1
+        )
+
+
 def run_probe(
         latents_root,
         model_name,
@@ -134,8 +154,8 @@ def run_probe(
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
-            fm = MultiOutputRegressor(
-                myfm.MyFMRegressor(
+            fm = MyMultiOutputRegressor(
+                lambda: myfm.MyFMRegressor(
                     rank=fm_rank,
                     random_seed=SEED
                 )
