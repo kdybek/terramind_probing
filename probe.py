@@ -15,7 +15,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-N_INTERACTION_SAMPLES = 20
+N_INTERACTION_SAMPLES = 5
 
 
 def create_spatial_groups(
@@ -294,7 +294,6 @@ def run_probe(
         lons,
         coordinate_encoding,
         hessian_frac,
-        reduced_dim
 ):
     latents = np.asarray(latents_root[:])
 
@@ -311,10 +310,15 @@ def run_probe(
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
     for interaction_seed in range(N_INTERACTION_SAMPLES):
+        X = add_interaction_features(
+            latents,
+            hessian_frac=hessian_frac,
+            seed=interaction_seed
+        )
+
         fold_scores = []
         for train_idx, val_idx in outer_cv.split(latents, y, groups=groups):
-
-            X_train, X_val = latents[train_idx], latents[val_idx]
+            X_train, X_val = X[train_idx], X[val_idx]
             y_train = y[train_idx]
             groups_train = groups[train_idx]
             lats_val = lats[val_idx]
@@ -322,22 +326,6 @@ def run_probe(
 
             # This is a workaround to pass the groups to the model during fitting
             model = MyRidge(alphas=np.logspace(-2, 8, 11), groups=groups_train)
-
-            if reduced_dim is not None and reduced_dim < X_train.shape[1]:
-                selector = RFE(estimator=model, n_features_to_select=reduced_dim, step=0.35)
-                X_train = selector.fit_transform(X_train, y_train)
-                X_val = selector.transform(X_val)
-
-            len_X_train = len(X_train)
-
-            X_all = np.vstack((X_train, X_val))
-            X_all = add_interaction_features(
-                X_all,
-                hessian_frac=hessian_frac,
-                seed=interaction_seed
-            )
-            X_train = X_all[:len_X_train]
-            X_val = X_all[len_X_train:]
 
             model.fit(X_train, y_train)
 
@@ -357,7 +345,6 @@ def run_probe(
         results.append({
             "interaction_seed": interaction_seed,
             "hessian_frac": hessian_frac,
-            "reduced_dim": reduced_dim,
             "model_name": model_name,
             "coordinate_encoding": coordinate_encoding,
             "mean_pred_err_km": np.mean(fold_scores),
@@ -414,7 +401,6 @@ def main():
                     lons,
                     coordinate_encoding,
                     hessian_frac,
-                    192
                 ))
 
     res = run_probe(*run_probe_args[run_id])
