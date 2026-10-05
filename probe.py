@@ -5,7 +5,7 @@ import os
 import sys
 import myfm
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.multioutput import MultiOutputRegressor
 
 
@@ -120,9 +120,9 @@ def run_probe(
 
     groups = create_spatial_groups(lats, lons)
 
-    outer_cv = GroupKFold(
+    outer_cv = GroupShuffleSplit(
         n_splits=5,
-        shuffle=True,
+        test_size=0.2,
         random_state=SEED
     )
 
