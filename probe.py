@@ -32,10 +32,7 @@ def create_spatial_groups(
         (lons + 180) / lon_bin_size
     )
 
-    groups = list(zip(
-        lat_bins.astype(int),
-        lon_bins.astype(int)
-    ))
+    groups = lat_bins.astype(int) * 1000 + lon_bins.astype(int)
 
     return groups
 
@@ -129,12 +126,6 @@ def run_probe(
     results = []
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
-
-    print("latents:", latents.shape)
-    print("lats:", lats.shape)
-    print("lons:", lons.shape)
-    print("groups:", groups.shape)
-    print("y:", y.shape)
 
     for fm_rank in FM_RANKS:
         for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
