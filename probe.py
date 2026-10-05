@@ -12,7 +12,6 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-FM_RANKS = [0, 1, 2, 4, 8, 16, 32, 64]
 
 
 def create_spatial_groups(
@@ -132,6 +131,7 @@ def run_probe(
         lats,
         lons,
         coordinate_encoding,
+        fm_rank
 ):
     latents = np.asarray(latents_root[:])
 
@@ -147,43 +147,42 @@ def run_probe(
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
-    for fm_rank in FM_RANKS:
-        for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
-            X_train, X_val = latents[train_idx], latents[val_idx]
-            y_train = y[train_idx]
-            lats_val = lats[val_idx]
-            lons_val = lons[val_idx]
+    for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
+        X_train, X_val = latents[train_idx], latents[val_idx]
+        y_train = y[train_idx]
+        lats_val = lats[val_idx]
+        lons_val = lons[val_idx]
 
-            fm = MyMultiOutputRegressor(
-                lambda: myfm.MyFMRegressor(
-                    rank=fm_rank,
-                    random_seed=SEED
-                )
+        fm = MyMultiOutputRegressor(
+            lambda: myfm.MyFMRegressor(
+                rank=fm_rank,
+                random_seed=SEED
             )
+        )
 
-            fm.fit(X_train, y_train)
+        fm.fit(X_train, y_train)
 
-            pred_encoded = fm.predict(X_val)
+        pred_encoded = fm.predict(X_val)
 
-            lats_pred, lons_pred = decode_target(
-                pred_encoded, coordinate_encoding=coordinate_encoding
-            )
+        lats_pred, lons_pred = decode_target(
+            pred_encoded, coordinate_encoding=coordinate_encoding
+        )
 
-            distances = [
-                compute_geodesic_distance(lat1, lon1, lat2, lon2)
-                for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred, lons_pred)
-            ]
+        distances = [
+            compute_geodesic_distance(lat1, lon1, lat2, lon2)
+            for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred, lons_pred)
+           ]
 
-            results.append({
-                "fold": i,
-                "fm_rank": fm_rank,
-                "model_name": model_name,
-                "coordinate_encoding": coordinate_encoding,
-                "mean_pred_err_km": np.mean(distances),
-                "median_err_km": np.median(distances),
-                "p90_err_km": np.percentile(distances,90),
-                "n_val": len(val_idx)
-            })
+        results.append({
+            "fold": i,
+            "fm_rank": fm_rank,
+            "model_name": model_name,
+            "coordinate_encoding": coordinate_encoding,
+            "mean_pred_err_km": np.mean(distances),
+            "median_err_km": np.median(distances),
+            "p90_err_km": np.percentile(distances,90),
+            "n_val": len(val_idx)
+        })
 
     return results
 
@@ -227,13 +226,15 @@ def main():
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
         for coordinate_encoding in ["none", "sincos", "spherical"]:
-            run_probe_args.append((
-                latents_root,
-                model_name,
-                lats,
-                lons,
-                coordinate_encoding,
-            ))
+            for fm_rank in [0, 1, 2, 4, 8, 16, 32, 64]:
+                run_probe_args.append((
+                    latents_root,
+                    model_name,
+                    lats,
+                    lons,
+                    coordinate_encoding,
+                    fm_rank
+                ))
 
     res = run_probe(*run_probe_args[run_id])
 
