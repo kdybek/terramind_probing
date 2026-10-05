@@ -3,11 +3,10 @@ import zarr
 import pickle
 import os
 import sys
-from sklearn.linear_model import Ridge
-from sklearn.feature_selection import RFE
+import myfm
 from sklearn.preprocessing import StandardScaler
-from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.model_selection import GridSearchCV, GroupKFold
+from sklearn.model_selection import GroupKFold
+from sklearn.multioutput import MultiOutputRegressor
 
 
 DATA_DIR = "data"
@@ -15,7 +14,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-N_INTERACTION_SAMPLES = 5
+FM_RANKS = [0, 1, 2, 4, 8, 16, 32, 64]
 
 
 def create_spatial_groups(
@@ -33,11 +32,10 @@ def create_spatial_groups(
         (lons + 180) / lon_bin_size
     )
 
-    groups = (
-        lat_bins.astype(int) * 1000
-        +
+    groups = list(zip(
+        lat_bins.astype(int),
         lon_bins.astype(int)
-    )
+    ))
 
     return groups
 
@@ -111,196 +109,19 @@ def decode_target(encoded, coordinate_encoding):
         raise ValueError(f"Unknown coordinate encoding: {coordinate_encoding}")
 
 
-
-def add_interaction_features(latents, hessian_frac, seed):
-    if hessian_frac == 0.0:
-        return latents
-
-    rng = np.random.default_rng(seed)
-    _, n_features = latents.shape
-
-    n_interactions = round(hessian_frac * (n_features * (n_features + 1)) // 2)
-
-    assert n_interactions <= (n_features * (n_features + 1)) // 2, \
-        "n_interactions exceeds the number of possible unique interactions"
-
-    # All (i,j) with i <= j
-    rows, cols = np.triu_indices(n_features)
-
-    idx = rng.choice(rows.size, size=n_interactions, replace=False)
-
-    interaction_features = (
-        latents[:, rows[idx]] *
-        latents[:, cols[idx]]
-    )
-
-    return np.hstack((latents, interaction_features))
-
-
-def svd_RRR(X, Y, rnk, lambda_=0):
-    """
-        Perform Ridge Regularized Reduced Rank Regression (RRR) using SVD.
-        Parameters:
-            X : np.ndarray
-                Input data matrix (n_samples, n_input_neurons).
-            Y : np.ndarray
-                Output data matrix (n_samples, n_output_neurons).
-            rnk : int
-                Dimensionaility of communication
-            lambda_ : float
-                Regularization parameter (default is 0 for no regularization).
-        Returns:
-            w0 : np.ndarray
-                Estimate of the communication strength (n_input_neurons, n_output_neurons).
-            urrr : np.ndarray
-                Input axes (n_input_neurons, rnk).
-            vrrr : np.ndarray
-                Output axes, orthonormal (n_output_neurons, rnk).
-    """
-    # Check if X and Y are 2D arrays
-    # Ridge regularization
-    XX = X.T @ X + lambda_ * np.eye(X.shape[1])
-
-    # Least squares estimate with ridge
-    if np.linalg.cond(XX) < 1e10:
-        wridge = np.linalg.solve(XX, X.T @ Y)
-    else:
-        wridge = np.linalg.pinv(XX) @ (X.T @ Y)
-
-    # SVD of relevant matrix
-    _, _, vrrr = np.linalg.svd(Y.T @ X @ wridge)
-
-    # Get the top 'rnk' components
-    vrrr = vrrr[:rnk, :].T   # shape: (features, rnk)
-    urrr = wridge @ vrrr    # shape: (features, rnk)
-
-    # Construct full RRR estimate
-    w0 = urrr @ vrrr.T
-    vrrr = vrrr.T  # for compatibility with original code's return
-
-    return w0, urrr, vrrr
-
-
-class ReducedRankRidge(
-    BaseEstimator,
-    RegressorMixin
-):
-    """
-    Ridge reduced-rank regression estimator
-    using the svd_RRR solver.
-    """
-
-    def __init__(
-        self,
-        rank=2,
-        alpha=1.0,
-        fit_intercept=True
-    ):
-        self.rank = rank
-        self.alpha = alpha
-        self.fit_intercept = fit_intercept
-
-    def fit(self, X, y):
-        X = np.asarray(X)
-        y = np.asarray(y)
-
-        if self.fit_intercept:
-            self.X_mean_ = X.mean(axis=0)
-            self.y_mean_ = y.mean(axis=0)
-
-            Xc = X - self.X_mean_
-            yc = y - self.y_mean_
-        else:
-            Xc = X
-            yc = y
-
-        W, U, V = svd_RRR(
-            Xc,
-            yc,
-            rnk=self.rank,
-            lambda_=self.alpha
-        )
-
-        self.coef_ = W.T
-
-        self.input_axes_ = U
-        self.output_axes_ = V
-
-        self.n_features_in_ = X.shape[1]
-
-        # Recover intercept
-        if self.fit_intercept:
-            self.intercept_ = self.y_mean_ - self.X_mean_ @ W
-        else:
-            self.intercept_ = np.zeros(y.shape[1])
-
-        return self
-
-    def predict(self, X):
-        X = np.asarray(X)
-        return X @ self.coef_.T + self.intercept_
-
-
-class MyRidge(
-    BaseEstimator,
-    RegressorMixin
-):
-    """
-    A custom Ridge regression estimator.
-    """
-    def __init__(self, alphas, groups):
-        self.alphas = alphas
-        self.groups = groups
-
-    def fit(self, X, y):
-        self.x_scaler_ = StandardScaler()
-        self.y_scaler_ = StandardScaler()
-
-        X_scaled = self.x_scaler_.fit_transform(X)
-        y_scaled = self.y_scaler_.fit_transform(y)
-
-        inner_cv = GroupKFold(
-            n_splits=2,
-            shuffle=True,
-            random_state=SEED + 1
-        )
-
-        self.cv_ = GridSearchCV(
-            estimator=Ridge(),
-            param_grid={"alpha": self.alphas},
-            cv=inner_cv,
-            scoring="neg_mean_squared_error",
-            n_jobs=-1
-        )
-        self.cv_.fit(X_scaled, y_scaled, groups=self.groups.copy())
-
-        self.model_ = self.cv_.best_estimator_
-        self.coef_ = self.model_.coef_
-
-        return self
-
-    def predict(self, X):
-        X_scaled = self.x_scaler_.transform(X)
-
-        y_scaled = self.model_.predict(X_scaled)
-
-        return self.y_scaler_.inverse_transform(y_scaled)
-
-
 def run_probe(
         latents_root,
         model_name,
         lats,
         lons,
         coordinate_encoding,
-        hessian_frac,
 ):
     latents = np.asarray(latents_root[:])
 
     groups = create_spatial_groups(lats, lons)
 
     outer_cv = GroupKFold(
-        n_splits=3,
+        n_splits=5,
         shuffle=True,
         random_state=SEED
     )
@@ -309,27 +130,23 @@ def run_probe(
 
     y = encode_target(lats, lons, coordinate_encoding=coordinate_encoding)
 
-    for interaction_seed in range(N_INTERACTION_SAMPLES):
-        X = add_interaction_features(
-            latents,
-            hessian_frac=hessian_frac,
-            seed=interaction_seed
-        )
-
-        fold_scores = []
-        for train_idx, val_idx in outer_cv.split(latents, y, groups=groups):
-            X_train, X_val = X[train_idx], X[val_idx]
+    for fm_rank in FM_RANKS:
+        for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
+            X_train, X_val = latents[train_idx], latents[val_idx]
             y_train = y[train_idx]
-            groups_train = groups[train_idx]
             lats_val = lats[val_idx]
             lons_val = lons[val_idx]
 
-            # This is a workaround to pass the groups to the model during fitting
-            model = MyRidge(alphas=np.logspace(-2, 8, 11), groups=groups_train)
+            fm = MultiOutputRegressor(
+                myfm.MyFMRegressor(
+                    rank=fm_rank,
+                    random_seed=SEED
+                )
+            )
 
-            model.fit(X_train, y_train)
+            fm.fit(X_train, y_train)
 
-            pred_encoded = model.predict(X_val)
+            pred_encoded = fm.predict(X_val)
 
             lats_pred, lons_pred = decode_target(
                 pred_encoded, coordinate_encoding=coordinate_encoding
@@ -340,16 +157,16 @@ def run_probe(
                 for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred, lons_pred)
             ]
 
-            fold_scores.append(np.mean(distances))
-
-        results.append({
-            "interaction_seed": interaction_seed,
-            "hessian_frac": hessian_frac,
-            "model_name": model_name,
-            "coordinate_encoding": coordinate_encoding,
-            "mean_pred_err_km": np.mean(fold_scores),
-            "std_pred_err_km": np.std(fold_scores),
-        })
+            results.append({
+                "fold": i,
+                "fm_rank": fm_rank,
+                "model_name": model_name,
+                "coordinate_encoding": coordinate_encoding,
+                "mean_pred_err_km": np.mean(distances),
+                "median_err_km": np.median(distances),
+                "p90_err_km": np.percentile(distances,90),
+                "n_val": len(val_idx)
+            })
 
     return results
 
@@ -392,16 +209,14 @@ def main():
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["none"]:
-            for hessian_frac in np.linspace(0.0, 0.1, 6):
-                run_probe_args.append((
-                    latents_root,
-                    model_name,
-                    lats,
-                    lons,
-                    coordinate_encoding,
-                    hessian_frac,
-                ))
+        for coordinate_encoding in ["none", "sincos", "spherical"]:
+            run_probe_args.append((
+                latents_root,
+                model_name,
+                lats,
+                lons,
+                coordinate_encoding,
+            ))
 
     res = run_probe(*run_probe_args[run_id])
 
