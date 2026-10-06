@@ -5,6 +5,7 @@ import os
 import sys
 import myfm
 from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import r2_score
 
 
 DATA_DIR = "data"
@@ -150,8 +151,8 @@ def run_probe(
     for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
         X_train, X_val = latents[train_idx], latents[val_idx]
         y_train = y[train_idx]
-        lats_val = lats[val_idx]
-        lons_val = lons[val_idx]
+        lats_train, lats_val = lats[train_idx], lats[val_idx]
+        lons_train, lons_val = lons[train_idx], lons[val_idx]
 
         fm = MyMultiOutputRegressor(
             lambda: myfm.MyFMRegressor(
@@ -162,26 +163,41 @@ def run_probe(
 
         fm.fit(X_train, y_train)
 
-        pred_encoded = fm.predict(X_val)
+        pred_encoded_val = fm.predict(X_val)
+        pred_encoded_train = fm.predict(X_train)
 
-        lats_pred, lons_pred = decode_target(
-            pred_encoded, coordinate_encoding=coordinate_encoding
+        r2_train = r2_score(y_train, pred_encoded_train, multioutput='variance_weighted')
+        r2_val = r2_score(y[val_idx], pred_encoded_val, multioutput='variance_weighted')
+
+        lats_pred_train, lons_pred_train = decode_target(
+            pred_encoded_train, coordinate_encoding=coordinate_encoding
+        )
+        lats_pred_val, lons_pred_val = decode_target(
+            pred_encoded_val, coordinate_encoding=coordinate_encoding
         )
 
-        distances = [
+        distances_train = [
             compute_geodesic_distance(lat1, lon1, lat2, lon2)
-            for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred, lons_pred)
-           ]
+            for lat1, lon1, lat2, lon2 in zip(lats_train, lons_train, lats_pred_train, lons_pred_train)
+        ]
+        distances_val = [
+            compute_geodesic_distance(lat1, lon1, lat2, lon2)
+            for lat1, lon1, lat2, lon2 in zip(lats_val, lons_val, lats_pred_val, lons_pred_val)
+        ]
 
         results.append({
             "fold": i,
             "fm_rank": fm_rank,
             "model_name": model_name,
             "coordinate_encoding": coordinate_encoding,
-            "mean_pred_err_km": np.mean(distances),
-            "median_err_km": np.median(distances),
-            "p90_err_km": np.percentile(distances,90),
-            "n_val": len(val_idx)
+            "mean_train_err_km": np.mean(distances_train),
+            "median_train_err_km": np.median(distances_train),
+            "p90_train_err_km": np.percentile(distances_train,90),
+            "mean_val_err_km": np.mean(distances_val),
+            "median_val_err_km": np.median(distances_val),
+            "p90_val_err_km": np.percentile(distances_val,90),
+            "r2_train": r2_train,
+            "r2_val": r2_val
         })
 
     return results
@@ -221,12 +237,12 @@ def main():
     }
 
     run_probe_args = []
-    for model_name in model_names:
+    for model_name in ["terramind_v1_large"]:
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["none", "sincos", "spherical"]:
-            for fm_rank in [0, 1, 2, 4, 8, 16, 32, 64]:
+        for coordinate_encoding in ["spherical"]:
+            for fm_rank in [0, 1, 2, 4, 8]:
                 run_probe_args.append((
                     latents_root,
                     model_name,
