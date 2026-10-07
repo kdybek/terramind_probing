@@ -253,13 +253,16 @@ def run_probe(
         loss_train = np.mean((y_pred_train - y_train) ** 2)
         loss_val = np.mean((y_pred_val - y_val) ** 2)
 
+        opt_alpha = regressor.named_steps["regressor"].alpha_
+
         results.append({
             "fold": i,
             "model_name": model_name,
             "target": target,
             "rff_component_count": rff_component_count,
             "train_loss": loss_train,
-            "val_loss": loss_val
+            "val_loss": loss_val,
+            "opt_alpha": opt_alpha
         })
 
     return results
@@ -302,12 +305,12 @@ def main():
     }
 
     run_probe_args = []
-    for model_name in model_names:
+    for model_name in ["terramind_v1_base"]:
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for target in ["bio01", "bio04", "bio12", "bio15"]:
-            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]:
+        for target in ["bio01"]:
+            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]:
                 run_probe_args.append((
                     latents_root,
                     metadata,
