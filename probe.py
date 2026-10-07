@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.kernel_approximation import RBFSampler
-from sklearn.linear_model import Ridge, RidgeCV
+from sklearn.linear_model import RidgeCV
 import zarr
 import pickle
 import os
@@ -230,7 +230,7 @@ def run_probe(
             n_components=rff_component_count,
             random_state=SEED
         )),
-        ("regressor", RidgeCV(alphas=np.logspace(-1, 8, 10)))
+        ("regressor", RidgeCV(alphas=np.logspace(-1, 10, 12)))
     ])
 
     results = []
@@ -307,7 +307,7 @@ def main():
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
         for target in ["bio01", "bio04", "bio12", "bio15"]:
-            for rff_component_count in [2, 4, 8, 16, 32, 64, 128, 256]:
+            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]:
                 run_probe_args.append((
                     latents_root,
                     metadata,
