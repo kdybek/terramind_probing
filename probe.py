@@ -1,4 +1,8 @@
 import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.kernel_approximation import RBFSampler
+from sklearn.linear_model import Ridge, RidgeCV
 import zarr
 import pickle
 import os
@@ -10,7 +14,7 @@ from sklearn.metrics import r2_score
 
 DATA_DIR = "data"
 LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
-METADATA_PATH = os.path.join(DATA_DIR, "metadata.pkl")
+METADATA_PATH = os.path.join(DATA_DIR, "metadata_2.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 
@@ -126,7 +130,7 @@ class MyMultiOutputRegressor:
         )
 
 
-def run_probe(
+def run_probe_coords(
         latents_root,
         model_name,
         lats,
@@ -203,6 +207,64 @@ def run_probe(
     return results
 
 
+def run_probe(
+        latents_root,
+        metadata,
+        groups,
+        model_name,
+        target,
+        rff_component_count
+):
+    latents = np.asarray(latents_root[:])
+
+    outer_cv = GroupShuffleSplit(
+        n_splits=5,
+        test_size=0.2,
+        random_state=SEED
+    )
+
+    regressor = Pipeline([
+        ("x_scaler", StandardScaler()),
+        ("rff", RBFSampler(
+            gamma="scale",
+            n_components=rff_component_count,
+            random_state=SEED
+        )),
+        ("regressor", RidgeCV(alphas=np.logspace(-1, 8, 10)))
+    ])
+
+    results = []
+
+    y = np.array([r[target] for r in metadata]).reshape(-1, 1)
+
+    for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
+        X_train, X_val = latents[train_idx], latents[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+
+        y_scaler = StandardScaler()
+        y_train = y_scaler.fit_transform(y_train)
+        y_val = y_scaler.transform(y_val)
+
+        regressor.fit(X_train, y_train)
+
+        y_pred_train = regressor.predict(X_train)
+        y_pred_val = regressor.predict(X_val)
+
+        loss_train = np.mean((y_pred_train - y_train) ** 2)
+        loss_val = np.mean((y_pred_val - y_val) ** 2)
+
+        results.append({
+            "fold": i,
+            "model_name": model_name,
+            "target": target,
+            "rff_component_count": rff_component_count,
+            "train_loss": loss_train,
+            "val_loss": loss_val
+        })
+
+    return results
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python probe.py <run_id>")
@@ -223,6 +285,9 @@ def main():
 
     lats = np.array([r["center_lat"] for r in metadata])
     lons = np.array([r["center_lon"] for r in metadata])
+
+    groups = create_spatial_groups(lats, lons)
+    
     model_names = [
         "terramind_v1_tiny",
         "terramind_v1_small",
@@ -237,19 +302,19 @@ def main():
     }
 
     run_probe_args = []
-    for model_name in ["terramind_v1_large"]:
+    for model_name in model_names:
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for coordinate_encoding in ["spherical"]:
-            for fm_rank in [0, 1, 2, 4, 8]:
+        for target in ["bio01", "bio04", "bio12", "bio15"]:
+            for rff_component_count in [2, 4, 8, 16, 32, 64, 128, 256]:
                 run_probe_args.append((
                     latents_root,
+                    metadata,
+                    groups,
                     model_name,
-                    lats,
-                    lons,
-                    coordinate_encoding,
-                    fm_rank
+                    target,
+                    rff_component_count
                 ))
 
     res = run_probe(*run_probe_args[run_id])
