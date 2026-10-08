@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=2:00:00
-#SBATCH --array=0-59
+#SBATCH --array=0-79%32
 #SBATCH --account=plgcredibleai2026-cpu
 #SBATCH --partition=plgrid
 #SBATCH --output=logs/%x_%A_%a.out

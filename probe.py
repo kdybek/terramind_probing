@@ -213,8 +213,7 @@ def run_probe(
         groups,
         model_name,
         target,
-        layer,
-        rff_component_count
+        layer
     ):
     latents = np.asarray(latents_root[:])
 
@@ -228,11 +227,7 @@ def run_probe(
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    if rff_component_count is None:
-        rff_list = RFF_COMPONENT_COUNT_LIST
-    else:
-        rff_list = [rff_component_count]
-    for rff_component_count in rff_list:
+    for rff_component_count in RFF_COMPONENT_COUNT_LIST:
         regressor = Pipeline([
             ("x_scaler", StandardScaler()),
             ("rff", RBFSampler(
@@ -337,38 +332,54 @@ def main():
         "terramind_v1_base": 12,
         "terramind_v1_large": 24,
     }
+    targets = ["bio01", "bio04", "bio12", "bio15"]
+    modality_groups = ["optical", "radar", "vegetation", "terrain", "landcover"]
 
     run_probe_args = []
     for model_name in model_names:
         num_layers = num_layers_dict[model_name]
-        latents_root = root[model_name][f"layer_{num_layers - 1}"]
+        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
 
-        for target in ["bio01", "bio04", "bio12", "bio15"]:
+        for target in targets:
             run_probe_args.append((
                 latents_root,
                 metadata,
                 groups,
                 model_name,
                 target,
-                num_layers - 1,
-                None  # Use default RFF_COMPONENT_COUNT_LIST
+                num_layers - 1
             ))
 
     for model_name in ["terramind_v1_base"]:
         num_layers = num_layers_dict[model_name]
 
         for layer in range(num_layers - 1):
-            latents_root = root[model_name][f"layer_{layer}"]
+            latents_root = root[model_name]["all"][f"layer_{layer}"]
 
-            for target in ["bio01", "bio04", "bio12", "bio15"]:
+            for target in targets:
                 run_probe_args.append((
                     latents_root,
                     metadata,
                     groups,
                     model_name,
                     target,
-                    layer,
-                    RFF_COMPONENT_COUNT_LIST[-1]
+                    layer
+                ))
+
+    for model_name in ["terramind_v1_base"]:
+        num_layers = num_layers_dict[model_name]
+    
+        for modality_group in modality_groups:
+            latents_root = root[model_name][modality_group][f"layer_{num_layers - 1}"]
+    
+            for target in targets:
+                run_probe_args.append((
+                    latents_root,
+                    metadata,
+                    groups,
+                    model_name,
+                    target,
+                    num_layers - 1
                 ))
 
     res = run_probe(*run_probe_args[run_id])
