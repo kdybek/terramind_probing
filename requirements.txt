@@ -8,9 +8,7 @@ zarr==2.18.0
 numcodecs==0.15.1
 terratorch
 torch
-scikit-learn<1.6
+scikit-learn
 huggingface_hub
 matplotlib
 tueplots
-myfm
-setuptools<70

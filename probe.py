@@ -2,21 +2,20 @@ import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.kernel_approximation import RBFSampler
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import Ridge
 import zarr
 import pickle
 import os
 import sys
-import myfm
-from sklearn.model_selection import GroupShuffleSplit
-from sklearn.metrics import r2_score
+from sklearn.model_selection import StratifiedKFold
 
 
 DATA_DIR = "data"
 LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
-METADATA_PATH = os.path.join(DATA_DIR, "metadata_2.pkl")
+METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
+RFF_COMPONENT_COUNT_LIST = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 
 
 def create_spatial_groups(
@@ -38,7 +37,7 @@ def create_spatial_groups(
 
     return groups
 
-
+'''
 def compute_geodesic_distance(lat1, lon1, lat2, lon2):
     R = 6371.0  # Radius of the Earth in kilometers
 
@@ -205,65 +204,72 @@ def run_probe_coords(
         })
 
     return results
-
+'''
 
 def run_probe(
         latents_root,
         metadata,
         groups,
         model_name,
-        target,
-        rff_component_count
-):
+        target
+    ):
     latents = np.asarray(latents_root[:])
 
-    outer_cv = GroupShuffleSplit(
+    cv = StratifiedKFold(
         n_splits=5,
-        test_size=0.2,
+        shuffle=True,
         random_state=SEED
     )
-
-    regressor = Pipeline([
-        ("x_scaler", StandardScaler()),
-        ("rff", RBFSampler(
-            gamma="scale",
-            n_components=rff_component_count,
-            random_state=SEED
-        )),
-        ("regressor", RidgeCV(alphas=np.logspace(-1, 10, 12)))
-    ])
 
     results = []
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    for i, (train_idx, val_idx) in enumerate(outer_cv.split(latents, y, groups=groups)):
-        X_train, X_val = latents[train_idx], latents[val_idx]
-        y_train, y_val = y[train_idx], y[val_idx]
+    for rff_component_count in RFF_COMPONENT_COUNT_LIST:
+        regressor = Pipeline([
+            ("x_scaler", StandardScaler()),
+            ("rff", RBFSampler(
+                gamma="scale",
+                n_components=rff_component_count,
+                random_state=SEED
+            )),
+            ("regressor", Ridge(alpha=1.0, random_state=SEED))
+        ])
 
-        y_scaler = StandardScaler()
-        y_train = y_scaler.fit_transform(y_train)
-        y_val = y_scaler.transform(y_val)
+        for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
+            X_train, X_val = latents[train_idx], latents[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
 
-        regressor.fit(X_train, y_train)
+            y_train_unscaled = y_train.copy()
+            y_val_unscaled = y_val.copy()
 
-        y_pred_train = regressor.predict(X_train)
-        y_pred_val = regressor.predict(X_val)
+            y_scaler = StandardScaler()
+            y_train = y_scaler.fit_transform(y_train)
+            y_val = y_scaler.transform(y_val)
 
-        loss_train = np.mean((y_pred_train - y_train) ** 2)
-        loss_val = np.mean((y_pred_val - y_val) ** 2)
+            regressor.fit(X_train, y_train)
 
-        opt_alpha = regressor.named_steps["regressor"].alpha_
+            y_pred_train = regressor.predict(X_train)
+            y_pred_val = regressor.predict(X_val)
 
-        results.append({
-            "fold": i,
-            "model_name": model_name,
-            "target": target,
-            "rff_component_count": rff_component_count,
-            "train_loss": loss_train,
-            "val_loss": loss_val,
-            "opt_alpha": opt_alpha
-        })
+            y_pred_train_unscaled = y_scaler.inverse_transform(y_pred_train)
+            y_pred_val_unscaled = y_scaler.inverse_transform(y_pred_val)
+
+            train_rmse = np.sqrt(np.mean((y_pred_train - y_train) ** 2))
+            val_rmse = np.sqrt(np.mean((y_pred_val - y_val) ** 2))
+            train_rmse_unscaled = np.sqrt(np.mean((y_pred_train_unscaled - y_train_unscaled) ** 2))
+            val_rmse_unscaled = np.sqrt(np.mean((y_pred_val_unscaled - y_val_unscaled) ** 2))
+
+            results.append({
+                "fold": i,
+                "model_name": model_name,
+                "target": target,
+                "rff_component_count": rff_component_count,
+                "train_rmse": train_rmse,
+                "val_rmse": val_rmse,
+                "train_rmse_unscaled": train_rmse_unscaled,
+                "val_rmse_unscaled": val_rmse_unscaled
+            })
 
     return results
 
@@ -310,15 +316,13 @@ def main():
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
         for target in ["bio01", "bio04", "bio12", "bio15"]:
-            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]:
-                run_probe_args.append((
-                    latents_root,
-                    metadata,
-                    groups,
-                    model_name,
-                    target,
-                    rff_component_count
-                ))
+            run_probe_args.append((
+                latents_root,
+                metadata,
+                groups,
+                model_name,
+                target
+            ))
 
     res = run_probe(*run_probe_args[run_id])
 
