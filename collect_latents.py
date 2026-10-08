@@ -12,9 +12,24 @@ import pickle
 import subprocess
 
 MODALITY_GROUPS = {
-    "optical": ["S2L2A", "S2L1C", "S2RGB", "NDVI"],
-    "radar": ["S1GRD", "S1RTC"],
-    "additional": ["DEM", "LULC"]
+    "optical": [
+        "S2L2A",
+        "S2L1C",
+        "S2RGB"
+    ],
+    "vegetation": [
+        "NDVI"
+    ],
+    "radar": [
+        "S1GRD",
+        "S1RTC"
+    ],
+    "terrain": [
+        "DEM"
+    ],
+    "landcover": [
+        "LULC"
+    ]
 }
 MODALITIES = [modality for group in MODALITY_GROUPS.values() for modality in group]
 MODALITY_GROUPS["all"] = MODALITIES
