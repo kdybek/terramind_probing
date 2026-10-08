@@ -230,7 +230,7 @@ def run_probe(
         regressor = Pipeline([
             ("x_scaler", StandardScaler()),
             ("rff", RBFSampler(
-                gamma=0.003,
+                gamma="scale",
                 n_components=rff_component_count,
                 random_state=SEED
             )),
