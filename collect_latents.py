@@ -11,8 +11,13 @@ import zarr
 import pickle
 import subprocess
 
-
-MODALITIES = ["S2L2A", "S2L1C", "S1GRD", "S1RTC", "DEM", "S2RGB", "NDVI", "LULC"]
+MODALITY_GROUPS = {
+    "optical": ["S2L2A", "S2L1C", "S2RGB", "NDVI"],
+    "radar": ["S1GRD", "S1RTC"],
+    "additional": ["DEM", "LULC"]
+}
+MODALITIES = [modality for group in MODALITY_GROUPS.values() for modality in group]
+MODALITY_GROUPS["all"] = MODALITIES
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATASET_PATH = "data/TerraMesh"
 VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
@@ -99,13 +104,16 @@ def main():
         num_layers = num_layers_dict[model_name]
         model_group = root.create_group(model_name)
 
-        for layer in range(num_layers):
-            model_group.create_dataset(
-                f"layer_{layer}",
-                shape=(0, latent_dim),
-                chunks=(256, latent_dim),
-                dtype=np.float32,
-            )
+        for modality_group_name in MODALITY_GROUPS.keys():
+            modality_group = model_group.create_group(modality_group_name)
+            for layer in range(num_layers):
+                modality_group.create_dataset(
+                    f"layer_{layer}",
+                    shape=(0, latent_dim),
+                    chunks=(256, latent_dim),
+                    dtype=np.float32,
+                )
+
 
     metadatas = []
     with torch.no_grad():
@@ -116,20 +124,23 @@ def main():
                 metadata = get_metadata(metadata_df, key)
                 metadatas.append(metadata)
 
-            input = {m: batch[m].to(DEVICE).float() for m in MODALITIES if m in batch}
+            for modality_group_name, modalities in MODALITY_GROUPS.items():
+                input_modalities = {m: batch[m].to(DEVICE).float() for m in modalities if m in batch}
 
-            for model_name, model in models.items():
-                group = root[model_name]
-                latents = model(input)
+                for model_name, model in models.items():
+                    group = root[model_name][modality_group_name]
+                    latents = model(input_modalities)
 
-                for layer in range(len(latents)):
-                    latent = latents[layer].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
-                    group[f"layer_{layer}"].append(latent)
+                    for layer in range(len(latents)):
+                        latent = latents[layer].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
+                        group[f"layer_{layer}"].append(latent)
+
 
     with open(META_PATH, "wb") as f:
         pickle.dump(metadatas, f)
 
     print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
+    print(f"Processed {len(metadatas)} samples.")
 
 
 if __name__ == "__main__":
