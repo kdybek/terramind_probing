@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.metrics import r2_score, root_mean_squared_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.kernel_approximation import RBFSampler
@@ -7,7 +8,7 @@ import zarr
 import pickle
 import os
 import sys
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import GroupKFold
 
 
 DATA_DIR = "data"
@@ -215,7 +216,7 @@ def run_probe(
     ):
     latents = np.asarray(latents_root[:])
 
-    cv = StratifiedKFold(
+    cv = GroupKFold(
         n_splits=5,
         shuffle=True,
         random_state=SEED
@@ -249,16 +250,34 @@ def run_probe(
 
             regressor.fit(X_train, y_train)
 
-            y_pred_train = regressor.predict(X_train)
-            y_pred_val = regressor.predict(X_val)
+            y_pred_train = regressor.predict(X_train).reshape(-1, 1)
+            y_pred_val = regressor.predict(X_val).reshape(-1, 1)
 
             y_pred_train_unscaled = y_scaler.inverse_transform(y_pred_train)
             y_pred_val_unscaled = y_scaler.inverse_transform(y_pred_val)
 
-            train_rmse = np.sqrt(np.mean((y_pred_train - y_train) ** 2))
-            val_rmse = np.sqrt(np.mean((y_pred_val - y_val) ** 2))
-            train_rmse_unscaled = np.sqrt(np.mean((y_pred_train_unscaled - y_train_unscaled) ** 2))
-            val_rmse_unscaled = np.sqrt(np.mean((y_pred_val_unscaled - y_val_unscaled) ** 2))
+            train_rmse = root_mean_squared_error(
+                y_train,
+                y_pred_train
+            )
+
+            val_rmse = root_mean_squared_error(
+                y_val,
+                y_pred_val
+            )
+
+            train_rmse_unscaled = root_mean_squared_error(
+                y_train_unscaled,
+                y_pred_train_unscaled
+            )
+
+            val_rmse_unscaled = root_mean_squared_error(
+                y_val_unscaled,
+                y_pred_val_unscaled
+            )
+
+            train_r2 = r2_score(y_train, y_pred_train)
+            val_r2 = r2_score(y_val, y_pred_val)
 
             results.append({
                 "fold": i,
@@ -268,7 +287,9 @@ def run_probe(
                 "train_rmse": train_rmse,
                 "val_rmse": val_rmse,
                 "train_rmse_unscaled": train_rmse_unscaled,
-                "val_rmse_unscaled": val_rmse_unscaled
+                "val_rmse_unscaled": val_rmse_unscaled,
+                "train_r2": train_r2,
+                "val_r2": val_r2
             })
 
     return results
