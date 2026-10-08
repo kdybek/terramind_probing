@@ -212,7 +212,9 @@ def run_probe(
         metadata,
         groups,
         model_name,
-        target
+        target,
+        layer,
+        rff_component_count
     ):
     latents = np.asarray(latents_root[:])
 
@@ -226,7 +228,11 @@ def run_probe(
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    for rff_component_count in RFF_COMPONENT_COUNT_LIST:
+    if rff_component_count is None:
+        rff_list = RFF_COMPONENT_COUNT_LIST
+    else:
+        rff_list = [rff_component_count]
+    for rff_component_count in rff_list:
         regressor = Pipeline([
             ("x_scaler", StandardScaler()),
             ("rff", RBFSampler(
@@ -283,6 +289,7 @@ def run_probe(
                 "fold": i,
                 "model_name": model_name,
                 "target": target,
+                "layer": layer,
                 "rff_component_count": rff_component_count,
                 "train_rmse": train_rmse,
                 "val_rmse": val_rmse,
@@ -342,8 +349,27 @@ def main():
                 metadata,
                 groups,
                 model_name,
-                target
+                target,
+                num_layers - 1,
+                None  # Use default RFF_COMPONENT_COUNT_LIST
             ))
+
+    for model_name in ["terramind_v1_base"]:
+        num_layers = num_layers_dict[model_name]
+
+        for layer in range(num_layers - 1):
+            latents_root = root[model_name][f"layer_{layer}"]
+
+            for target in ["bio01", "bio04", "bio12", "bio15"]:
+                run_probe_args.append((
+                    latents_root,
+                    metadata,
+                    groups,
+                    model_name,
+                    target,
+                    layer,
+                    RFF_COMPONENT_COUNT_LIST[-1]
+                ))
 
     res = run_probe(*run_probe_args[run_id])
 
