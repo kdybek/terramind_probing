@@ -305,12 +305,12 @@ def main():
     }
 
     run_probe_args = []
-    for model_name in ["terramind_v1_base"]:
+    for model_name in model_names:
         num_layers = num_layers_dict[model_name]
         latents_root = root[model_name][f"layer_{num_layers - 1}"]
 
-        for target in ["bio01"]:
-            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]:
+        for target in ["bio01", "bio04", "bio12", "bio15"]:
+            for rff_component_count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]:
                 run_probe_args.append((
                     latents_root,
                     metadata,
