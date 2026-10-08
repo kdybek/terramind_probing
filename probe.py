@@ -16,7 +16,7 @@ LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
-RFF_COMPONENT_COUNT_LIST = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+RFF_COMPONENT_COUNT_LIST = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 
 
 def create_spatial_groups(
