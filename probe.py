@@ -254,6 +254,7 @@ def run_probe(
             regressor = RandomForestRegressor(
                 max_depth=capacity,
                 n_estimators=100,
+                max_features="sqrt",
                 random_state=SEED,
                 n_jobs=-1
             )
