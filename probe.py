@@ -213,7 +213,8 @@ def run_probe(
         groups,
         model_name,
         target,
-        layer
+        layer,
+        modality_group
     ):
     latents = np.asarray(latents_root[:])
 
@@ -285,6 +286,7 @@ def run_probe(
                 "model_name": model_name,
                 "target": target,
                 "layer": layer,
+                "modality_group": modality_group,
                 "rff_component_count": rff_component_count,
                 "train_rmse": train_rmse,
                 "val_rmse": val_rmse,
@@ -347,7 +349,8 @@ def main():
                 groups,
                 model_name,
                 target,
-                num_layers - 1
+                num_layers - 1,
+                "all"
             ))
 
     for model_name in ["terramind_v1_base"]:
@@ -363,7 +366,8 @@ def main():
                     groups,
                     model_name,
                     target,
-                    layer
+                    layer,
+                    "all"
                 ))
 
     for model_name in ["terramind_v1_base"]:
@@ -379,7 +383,8 @@ def main():
                     groups,
                     model_name,
                     target,
-                    num_layers - 1
+                    num_layers - 1,
+                    modality_group
                 ))
 
     res = run_probe(*run_probe_args[run_id])
