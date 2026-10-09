@@ -252,7 +252,7 @@ def run_probe(
         elif regressor == "rf":
             regressor = RandomForestRegressor(
                 max_depth=capacity,
-                n_estimators=300,
+                n_estimators=100,
                 random_state=SEED,
                 n_jobs=-1
             )
