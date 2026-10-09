@@ -4,6 +4,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.kernel_approximation import RBFSampler
 from sklearn.linear_model import Ridge
+from sklearn.ensemble import RandomForestRegressor
 import zarr
 import pickle
 import os
@@ -17,6 +18,7 @@ METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 RFF_COMPONENT_COUNT_LIST = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+RF_TREE_DEPTH_LIST = [1, 2, 4, 8, 16, 32]
 
 
 def create_spatial_groups(
@@ -214,7 +216,8 @@ def run_probe(
         model_name,
         target,
         layer,
-        modality_group
+        modality_group,
+        regressor
     ):
     latents = np.asarray(latents_root[:])
 
@@ -228,16 +231,31 @@ def run_probe(
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    for rff_component_count in RFF_COMPONENT_COUNT_LIST:
-        regressor = Pipeline([
-            ("x_scaler", StandardScaler()),
-            ("rff", RBFSampler(
-                gamma="scale",
-                n_components=rff_component_count,
-                random_state=SEED
-            )),
-            ("regressor", Ridge(alpha=1.0, random_state=SEED))
-        ])
+    if regressor == "rff":
+        capacity_list = RFF_COMPONENT_COUNT_LIST
+    elif regressor == "rf":
+        capacity_list = RF_TREE_DEPTH_LIST
+    else:
+        raise ValueError(f"Unknown regressor type: {regressor}")
+
+    for capacity in capacity_list:
+        if regressor == "rff":
+            regressor = Pipeline([
+                ("x_scaler", StandardScaler()),
+                ("rff", RBFSampler(
+                    gamma="scale",
+                    n_components=capacity,
+                    random_state=SEED
+                )),
+                ("regressor", Ridge(alpha=1.0, random_state=SEED))
+            ])
+        elif regressor == "rf":
+            regressor = RandomForestRegressor(
+                max_depth=capacity,
+                n_estimators=300,
+                random_state=SEED,
+                n_jobs=-1
+            )
 
         for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
             X_train, X_val = latents[train_idx], latents[val_idx]
@@ -287,7 +305,8 @@ def run_probe(
                 "target": target,
                 "layer": layer,
                 "modality_group": modality_group,
-                "rff_component_count": rff_component_count,
+                "regressor": regressor,
+                "capacity": capacity,
                 "train_rmse": train_rmse,
                 "val_rmse": val_rmse,
                 "train_rmse_unscaled": train_rmse_unscaled,
@@ -350,7 +369,8 @@ def main():
                 model_name,
                 target,
                 num_layers - 1,
-                "all"
+                "all",
+                "rff"
             ))
 
     for model_name in ["terramind_v1_base"]:
@@ -367,7 +387,8 @@ def main():
                     model_name,
                     target,
                     layer,
-                    "all"
+                    "all",
+                    "rff"
                 ))
 
     for model_name in ["terramind_v1_base"]:
@@ -384,8 +405,25 @@ def main():
                     model_name,
                     target,
                     num_layers - 1,
-                    modality_group
+                    modality_group,
+                    "rff"
                 ))
+
+    for model_name in model_names:
+        num_layers = num_layers_dict[model_name]
+        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
+    
+        for target in targets:
+            run_probe_args.append((
+                latents_root,
+                metadata,
+                groups,
+                model_name,
+                target,
+                num_layers - 1,
+                "all",
+                "rf"
+            ))
 
     res = run_probe(*run_probe_args[run_id])
 
