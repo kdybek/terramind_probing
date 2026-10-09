@@ -18,7 +18,7 @@ METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 RFF_COMPONENT_COUNT_LIST = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
-RF_TREE_DEPTH_LIST = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+RF_TREE_DEPTH_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
 def create_spatial_groups(
@@ -217,7 +217,7 @@ def run_probe(
         target,
         layer,
         modality_group,
-        regressor
+        regressor_type
     ):
     latents = np.asarray(latents_root[:])
 
@@ -231,16 +231,16 @@ def run_probe(
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    if regressor == "rff":
+    if regressor_type == "rff":
         capacity_list = RFF_COMPONENT_COUNT_LIST
-    elif regressor == "rf":
+    elif regressor_type == "rf":
         capacity_list = RF_TREE_DEPTH_LIST
     else:
-        raise ValueError(f"Unknown regressor type: {regressor}")
+        raise ValueError(f"Unknown regressor type: {regressor_type}")
 
     for capacity in capacity_list:
-        print(f"Capacity: {capacity}, Model: {model_name}, Target: {target}, Layer: {layer}, Modality Group: {modality_group}")
-        if regressor == "rff":
+        print(f"capacity: {capacity}, model: {model_name}, target: {target}, layer: {layer}, modality_group: {modality_group}, regressor_type: {regressor_type}")
+        if regressor_type == "rff":
             regressor = Pipeline([
                 ("x_scaler", StandardScaler()),
                 ("rff", RBFSampler(
@@ -250,10 +250,11 @@ def run_probe(
                 )),
                 ("regressor", Ridge(alpha=1.0, random_state=SEED))
             ])
-        elif regressor == "rf":
+        elif regressor_type == "rf":
             regressor = RandomForestRegressor(
                 max_depth=capacity,
                 n_estimators=100,
+                min_samples_leaf=10,
                 max_features="sqrt",
                 random_state=SEED,
                 n_jobs=-1
