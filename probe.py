@@ -307,7 +307,7 @@ def run_probe(
                 "target": target,
                 "layer": layer,
                 "modality_group": modality_group,
-                "regressor": regressor,
+                "regressor": regressor_type,
                 "capacity": capacity,
                 "train_rmse": train_rmse,
                 "val_rmse": val_rmse,
