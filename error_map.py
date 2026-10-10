@@ -105,7 +105,7 @@ def run_probe_error_map(
             y_pred_unscaled = y_scaler.inverse_transform(y_pred_val)
             y_true_unscaled = y_scaler.inverse_transform(y_val)
 
-            for y_pred, y_true, lat, lon, y_pred_uns, y_true_uns in zip(y_pred_val, y_val, lats_val, lons_val, y_pred_unscaled, y_true_unscaled):
+            for y_pred, y_true, lat, lon, y_pred_uns, y_true_uns in zip(y_pred_val, y_val, lats_val, lons_val, y_pred_unscaled, y_true_unscaled, strict=True):
                 error = y_pred - y_true
                 error_unscaled = y_pred_uns - y_true_uns
 
