@@ -5,11 +5,12 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.kernel_approximation import RBFSampler
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.dummy import DummyRegressor
+from sklearn.model_selection import GroupKFold
 import zarr
 import pickle
 import os
 import sys
-from sklearn.model_selection import GroupKFold
 
 
 DATA_DIR = "data"
@@ -235,6 +236,8 @@ def run_probe(
         capacity_list = RFF_COMPONENT_COUNT_LIST
     elif regressor_type == "rf":
         capacity_list = RF_TREE_DEPTH_LIST
+    elif regressor_type == "baseline":
+        capacity_list = [None]
     else:
         raise ValueError(f"Unknown regressor type: {regressor_type}")
 
@@ -258,6 +261,8 @@ def run_probe(
                 random_state=SEED,
                 n_jobs=-1
             )
+        elif regressor_type == "baseline":
+            regressor = DummyRegressor(strategy="mean")
 
         for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
             X_train, X_val = latents[train_idx], latents[val_idx]
@@ -425,6 +430,22 @@ def main():
                 num_layers - 1,
                 "all",
                 "rf"
+            ))
+
+    for model_name in ["terramind_v1_base"]:
+        num_layers = num_layers_dict[model_name]
+        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
+
+        for target in targets:
+            run_probe_args.append((
+                latents_root,
+                metadata,
+                groups,
+                model_name,
+                target,
+                num_layers - 1,
+                "all",
+                "baseline"
             ))
 
     res = run_probe(*run_probe_args[run_id])
