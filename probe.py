@@ -19,7 +19,7 @@ METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 SEED = 42
 RFF_COMPONENT_COUNT_LIST = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
-RF_TREE_DEPTH_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+RF_TREE_DEPTH_LIST = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
 
 
 def create_spatial_groups(
@@ -242,7 +242,6 @@ def run_probe(
         raise ValueError(f"Unknown regressor type: {regressor_type}")
 
     for capacity in capacity_list:
-        print(f"capacity: {capacity}, model: {model_name}, target: {target}, layer: {layer}, modality_group: {modality_group}, regressor_type: {regressor_type}")
         if regressor_type == "rff":
             regressor = Pipeline([
                 ("x_scaler", StandardScaler()),
