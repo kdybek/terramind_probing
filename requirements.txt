@@ -12,3 +12,4 @@ scikit-learn
 huggingface_hub
 matplotlib
 tueplots
+h3
