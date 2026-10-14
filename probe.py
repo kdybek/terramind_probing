@@ -207,6 +207,24 @@ def main():
                         regressor_type
                     ))
 
+    for model_name in model_names:
+        num_layers = num_layers_dict[model_name]
+        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
+
+        for target in targets:
+            for regressor_type in ["linear", "mlp"]:
+                for resolution in [0, 1]:
+                    run_probe_args.append((
+                        latents_root,
+                        metadata,
+                        lats,
+                        lons,
+                        resolution,
+                        model_name,
+                        target,
+                        regressor_type
+                    ))
+
     res = run_probe(*run_probe_args[run_id])
 
     with open(res_path, "wb") as f:
