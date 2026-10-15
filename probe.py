@@ -56,7 +56,8 @@ def run_probe(
         resolution,
         model_name,
         target,
-        regressor_type
+        regressor_type,
+        lat_lon_baseline=False
     ):
     latents = np.asarray(latents_root[:])
 
@@ -94,7 +95,11 @@ def run_probe(
         ])
 
     for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
-        X_train, X_val = latents[train_idx], latents[val_idx]
+        if not lat_lon_baseline:
+            X_train, X_val = latents[train_idx], latents[val_idx]
+        else:
+            X_train, X_val = np.array([lats[train_idx], lons[train_idx]]).T, np.array([lats[val_idx], lons[val_idx]]).T
+
         y_train, y_val = y[train_idx], y[val_idx]
 
         y_train_unscaled = y_train.copy()
@@ -141,6 +146,7 @@ def run_probe(
             "target": target,
             "resolution": resolution,
             "regressor": regressor_type,
+            "lat_lon_baseline": lat_lon_baseline,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "train_rmse_unscaled": train_rmse_unscaled,
@@ -186,7 +192,7 @@ def main():
         "terramind_v1_large": 24,
     }
     targets = ["bio01", "bio04", "bio12", "bio15"]
-    resolutions = [2, 3, 4, 5, 6, 7]
+    resolutions = [0, 1, 2, 3, 4, 5, 6, 7]
 
     run_probe_args = []
     for model_name in model_names:
@@ -207,23 +213,20 @@ def main():
                         regressor_type
                     ))
 
-    for model_name in model_names:
-        num_layers = num_layers_dict[model_name]
-        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
-
-        for target in targets:
-            for regressor_type in ["linear", "mlp"]:
-                for resolution in [0, 1]:
-                    run_probe_args.append((
-                        latents_root,
-                        metadata,
-                        lats,
-                        lons,
-                        resolution,
-                        model_name,
-                        target,
-                        regressor_type
-                    ))
+    for target in targets:
+        for regressor_type in ["linear"]:
+            for resolution in resolutions:
+                run_probe_args.append((
+                    latents_root,
+                    metadata,
+                    lats,
+                    lons,
+                    resolution,
+                    model_name,
+                    target,
+                    regressor_type,
+                    True  # lat_lon_baseline
+                ))
 
     res = run_probe(*run_probe_args[run_id])
 
