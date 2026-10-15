@@ -55,6 +55,7 @@ def run_probe(
         model_name,
         target,
         regressor_type,
+        layer
     ):
     latents = np.asarray(latents_root[:])
 
@@ -147,6 +148,7 @@ def run_probe(
             "target": target,
             "resolution": resolution,
             "regressor": regressor_type,
+            "layer": layer if model_name != "baseline" else None,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "train_rmse_unscaled": train_rmse_unscaled,
@@ -219,6 +221,25 @@ def main():
                     target,
                     regressor_type
                 ))
+
+    for model_name in ["terramind_v1_base"]:
+        num_layers = num_layers_dict[model_name]
+
+        for layer in range(num_layers):
+            latents_root = root[model_name]["all"][f"layer_{layer}"]
+
+            for target in targets:
+                for regressor_type in ["linear"]:
+                    for resolution in [0]:
+                        run_probe_args.append((
+                            latents_root,
+                            metadata,
+                            resolution,
+                            model_name,
+                            target,
+                            regressor_type,
+                            layer
+                        ))
 
     res = run_probe(*run_probe_args[run_id])
 
