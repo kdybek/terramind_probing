@@ -148,7 +148,7 @@ def run_probe(
             "target": target,
             "resolution": resolution,
             "regressor": regressor_type,
-            "layer": layer if model_name != "baseline" else None,
+            "layer": layer,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "train_rmse_unscaled": train_rmse_unscaled,
@@ -207,7 +207,8 @@ def main():
                         resolution,
                         model_name,
                         target,
-                        regressor_type
+                        regressor_type,
+                        num_layers - 1
                     ))
 
     for target in targets:
@@ -219,7 +220,8 @@ def main():
                     resolution,
                     "baseline",
                     target,
-                    regressor_type
+                    regressor_type,
+                    None
                 ))
 
     for model_name in ["terramind_v1_base"]:
