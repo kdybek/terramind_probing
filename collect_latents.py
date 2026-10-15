@@ -134,9 +134,14 @@ def main():
     with torch.no_grad():
         for batch in dataloader:
             keys = batch['__key__']
+            dems = batch['DEM']
 
-            for key in keys:
+            for key, dem in zip(keys, dems, strict=True):
                 metadata = get_metadata(metadata_df, key)
+                C, H, W = dem.shape
+                assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
+                elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
+                metadata['elevation'] = elevation
                 metadatas.append(metadata)
 
             for modality_group_name, modalities in MODALITY_GROUPS.items():

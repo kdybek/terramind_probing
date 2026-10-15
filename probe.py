@@ -51,13 +51,10 @@ def assign_h3_blocks(lat, lon, resolution):
 def run_probe(
         latents_root,
         metadata,
-        lats,
-        lons,
         resolution,
         model_name,
         target,
         regressor_type,
-        lat_lon_baseline=False
     ):
     latents = np.asarray(latents_root[:])
 
@@ -68,6 +65,10 @@ def run_probe(
     )
 
     results = []
+
+    lats = np.array([r["center_lat"] for r in metadata])
+    lons = np.array([r["center_lon"] for r in metadata])
+    elevations = np.array([r["elevation"] for r in metadata])
 
     groups = assign_h3_blocks(lats, lons, resolution)
 
@@ -95,10 +96,10 @@ def run_probe(
         ])
 
     for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
-        if not lat_lon_baseline:
+        if model_name != "baseline":
             X_train, X_val = latents[train_idx], latents[val_idx]
         else:
-            X_train, X_val = np.array([lats[train_idx], lons[train_idx]]).T, np.array([lats[val_idx], lons[val_idx]]).T
+            X_train, X_val = np.array([lats[train_idx], lons[train_idx], elevations[train_idx]]).T, np.array([lats[val_idx], lons[val_idx], elevations[val_idx]]).T
 
         y_train, y_val = y[train_idx], y[val_idx]
 
@@ -146,7 +147,6 @@ def run_probe(
             "target": target,
             "resolution": resolution,
             "regressor": regressor_type,
-            "lat_lon_baseline": lat_lon_baseline,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "train_rmse_unscaled": train_rmse_unscaled,
@@ -175,9 +175,6 @@ def main():
 
     with open(METADATA_PATH, "rb") as f:
         metadata = pickle.load(f)
-
-    lats = np.array([r["center_lat"] for r in metadata])
-    lons = np.array([r["center_lon"] for r in metadata])
     
     model_names = [
         "terramind_v1_tiny",
@@ -205,8 +202,6 @@ def main():
                     run_probe_args.append((
                         latents_root,
                         metadata,
-                        lats,
-                        lons,
                         resolution,
                         model_name,
                         target,
@@ -219,13 +214,10 @@ def main():
                 run_probe_args.append((
                     latents_root,
                     metadata,
-                    lats,
-                    lons,
                     resolution,
-                    model_name,
+                    "baseline",
                     target,
-                    regressor_type,
-                    True  # lat_lon_baseline
+                    regressor_type
                 ))
 
     res = run_probe(*run_probe_args[run_id])
