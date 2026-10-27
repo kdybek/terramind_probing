@@ -11,67 +11,71 @@ import zarr
 import pickle
 import subprocess
 
-MODALITY_GROUPS = {
-    "optical": [
-        "S2L2A",
-        "S2L1C",
-        "S2RGB"
-    ],
-    "vegetation": [
-        "NDVI"
-    ],
-    "radar": [
-        "S1GRD",
-        "S1RTC"
-    ],
-    "terrain": [
-        "DEM"
-    ],
-    "landcover": [
-        "LULC"
-    ]
-}
-MODALITIES = [modality for group in MODALITY_GROUPS.values() for modality in group]
-MODALITY_GROUPS["all"] = MODALITIES
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATASET_PATH = "data/TerraMesh"
-VAL_METADATA_URL = "https://huggingface.co/datasets/ibm-esa-geospatial/TerraMesh/resolve/main/val_metadata.parquet"
 DATA_DIR = "data"
-VAL_METADATA_PATH = os.path.join(DATA_DIR, "val_metadata.parquet")
 ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr")
 META_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 
+METADATA_KEYS = ["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"]
+MODELS = ["terramind_v1_tiny", "terramind_v1_small", "terramind_v1_base", "terramind_v1_large"]
+LATENT_DIMS_DICT = {
+    "terramind_v1_tiny": 192,
+    "terramind_v1_small": 384,
+    "terramind_v1_base": 768,
+    "terramind_v1_large": 1024
+}
 
-def get_metadata(metadata_df, key):
-    key_zarr = f"{key}.zarr.zip"
-    row = metadata_df[metadata_df["zarr"] == key_zarr]
+TERRAMIND_V1_MEANS = [
+    1390.458,
+    1503.317,
+    1718.197,
+    1853.91,
+    2199.1,
+    2779.975,
+    2987.011,
+    3083.234,
+    3132.22,
+    3162.988,
+    2424.884,
+    1857.648,
+]
+TERRAMIND_V1_STDS = [
+    2106.761,
+    2141.107,
+    2038.973,
+    2134.138,
+    2085.321,
+    1889.926,
+    1820.257,
+    1871.918,
+    1753.829,
+    1797.379,
+    1434.261,
+    1334.311,
+]
 
-    if row.empty:
-        print(f"Warning: No metadata found for key {key}.")
-        return None
-    else:
-        return row.iloc[0]
+
+def load_model(model_name):
+    model = BACKBONE_REGISTRY.build(
+        model_name,
+        pretrained=True,
+        modalities=["S2L2A"],
+        merge_method='mean'
+    )
+    model.to(DEVICE)
+    model.eval()
+
+    return model
 
 
-def load_models():
-    model_names = ["terramind_v1_tiny", "terramind_v1_small", "terramind_v1_base", "terramind_v1_large"]
-    latent_dims = [192, 384, 768, 1024]
-    num_layers = [12, 12, 12, 24]
-    models = {}
-    latent_dim_dict = dict(zip(model_names, latent_dims))
-    num_layers_dict = dict(zip(model_names, num_layers))
-    for name in model_names:
-        model = BACKBONE_REGISTRY.build(
-            name,
-            pretrained=True,
-            modalities=MODALITIES,
-            merge_method='mean'
-        )
-        model.to(DEVICE)
-        model.eval()
-        models[name] = model
-
-    return models, latent_dim_dict, num_layers_dict
+def prepare_input(input, model_name):
+    if model_name.startswith("terramind_v1_"):
+        means = torch.tensor(TERRAMIND_V1_MEANS, device=input.device).view(1, -1, 1, 1)
+        stds = torch.tensor(TERRAMIND_V1_STDS, device=input.device).view(1, -1, 1, 1)
+        input = (input - means) / stds
+        return input
 
 
 def main():
@@ -79,24 +83,24 @@ def main():
         transforms=A.Compose([  # We use albumentations because of the shared transform between image modalities
             # Convert data to channel last (expected shape from albumentations)
             Transpose([1, 2, 0]),
-            MultimodalNormalize(mean=statistics["mean"], std=statistics["std"]),
             A.CenterCrop(224, 224),  # Use center crop in val split
             # A.RandomCrop(224, 224),  # Use random crop in train split
             # A.D4(),  # Optionally, use random flipping and rotation for the train split
             ToTensorV2(),  # Convert to tensor and back to channel first
         ],
             is_check_shapes=False,  # Not needed because of aligned data in TerraMesh
-            additional_targets={m: "image" for m in MODALITIES}
+            additional_targets={m: "image" for m in ["S2L2A", "DEM", "cloud_mask"]}  # Specify additional modalities to transform
         ),
-        non_image_modalities=["__key__", "__url__"],  # Additional non-image keys
+        non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"],  # Additional non-image keys
     )
 
     dataset = build_terramesh_dataset(
         path=DATASET_PATH,
-        modalities=MODALITIES,
+        modalities=["S2L2A", "DEM"],
         split="val",
         transform=val_transform,
         shuffle=False,
+        return_metadata=True,
         batch_size=128,
     )
 
@@ -105,62 +109,52 @@ def main():
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    if not os.path.exists(VAL_METADATA_PATH):
-        subprocess.run(["wget", "-O", VAL_METADATA_PATH, VAL_METADATA_URL], check=True)
-
-    metadata_df = pd.read_parquet(VAL_METADATA_PATH)
-
-    models, latent_dim_dict, num_layers_dict = load_models()
-
     root = zarr.open(ZARR_PATH, mode="w")
 
-    for model_name, model in models.items():
-        latent_dim = latent_dim_dict[model_name]
-        num_layers = num_layers_dict[model_name]
-        model_group = root.create_group(model_name)
+    for model_name in MODELS:
+        latent_dim = LATENT_DIMS_DICT[model_name]
 
-        for modality_group_name in MODALITY_GROUPS.keys():
-            modality_group = model_group.create_group(modality_group_name)
-            for layer in range(num_layers):
-                modality_group.create_dataset(
-                    f"layer_{layer}",
-                    shape=(0, latent_dim),
-                    chunks=(256, latent_dim),
-                    dtype=np.float32,
-                )
+        root.create_dataset(
+            model_name,
+            shape=(0, latent_dim),
+            chunks=(256, latent_dim),
+            dtype=np.float32,
+        )
 
+    per_model_metadata = {}
+    for model_name in MODELS:
+        model = load_model(model_name)
 
-    metadatas = []
-    with torch.no_grad():
-        for batch in dataloader:
-            keys = batch['__key__']
-            dems = batch['DEM']
+        metadatas = []
+        with torch.no_grad():
+            for batch in dataloader:
+                dems = batch['DEM']
+                meta = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
 
-            for key, dem in zip(keys, dems, strict=True):
-                metadata = get_metadata(metadata_df, key)
-                C, H, W = dem.shape
-                assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
-                elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
-                metadata['elevation'] = elevation
-                metadatas.append(metadata)
+                for dem in dems:
+                    C, H, W = dem.shape
+                    assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
+                    elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
 
-            for modality_group_name, modalities in MODALITY_GROUPS.items():
-                input_modalities = {m: batch[m].to(DEVICE).float() for m in modalities if m in batch}
+                    metadata = meta.pop(0)
+                    metadata['elevation'] = elevation
+                    metadatas.append(metadata)
 
-                for model_name, model in models.items():
-                    group = root[model_name][modality_group_name]
-                    latents = model(input_modalities)
+                input = batch['S2L2A'].float()
+                input = prepare_input(input, model_name)
+                input = input.to(DEVICE)
+                latents = model(input)[-1].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
+                root[model_name].append(latents)
 
-                    for layer in range(len(latents)):
-                        latent = latents[layer].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
-                        group[f"layer_{layer}"].append(latent)
-
+        per_model_metadata[model_name] = metadatas
 
     with open(META_PATH, "wb") as f:
-        pickle.dump(metadatas, f)
+        pickle.dump(per_model_metadata, f)
+
+    per_model_counts = {model_name: len(per_model_metadata[model_name]) for model_name in MODELS}
 
     print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
-    print(f"Processed {len(metadatas)} samples.")
+    print(f"Processed samples per model: {per_model_counts}.")
 
 
 if __name__ == "__main__":
