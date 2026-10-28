@@ -184,7 +184,8 @@ def main():
         "thor_v1_large", 
         "prithvi_eo_v2_600",
         "dofa_large_patch16_224",
-        "croma_large"
+        "croma_large",
+        "pixel_stats"
     ]
     targets = ["bio01", "bio04", "bio12", "bio15"]
     resolutions = [0, 1, 2, 3, 4, 5, 6, 7]
