@@ -11,6 +11,7 @@ import zarr
 import pickle
 import subprocess
 import thor_terratorch_ext
+from tqdm import tqdm
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -259,10 +260,10 @@ def get_latents(model, input, model_name):
 def get_dataloader(model_name):
     if model_name.startswith("thor_v1_"):
         crop_size = 240
-        batch_size = 512
-    if model_name.startswith("croma_"):
+        batch_size = 128
+    elif model_name.startswith("croma_"):
         crop_size = 120
-        batch_size = 2048
+        batch_size = 512
     else:
         crop_size = 224
         batch_size = 512
@@ -319,7 +320,7 @@ def main():
 
         metadatas = []
         with torch.no_grad():
-            for batch in dataloader:
+            for batch in tqdm(dataloader):
                 dems = batch['DEM']
                 meta = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
 
