@@ -209,7 +209,9 @@ def drop_time_dim(value, dim: int = 0):
 
     elif isinstance(value, dict):
         for k, v in value.items():
-            if (isinstance(v, np.ndarray) or isinstance(v, torch.Tensor)) and v.shape[dim] == 1:
+            if (isinstance(v, np.ndarray) or isinstance(v, torch.Tensor)) and v.shape == ():
+                value[k] = v.item()
+            elif (isinstance(v, np.ndarray) or isinstance(v, torch.Tensor)) and v.shape[dim] == 1:
                 value[k] = v.squeeze(dim)
         return value
     else:

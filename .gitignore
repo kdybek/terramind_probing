@@ -219,5 +219,8 @@ __marimo__/
 
 data/CHELSA_*
 data/metadata*
+data/TerraMesh/*
+data/latents.zarr/*
+data/croma_*
 
 plots/*

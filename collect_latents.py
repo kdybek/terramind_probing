@@ -20,7 +20,7 @@ DATA_DIR = "data"
 ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr")
 META_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 
-METADATA_KEYS = ["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"]
+METADATA_KEYS = ["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A"]
 MODELS = [
     "terramind_v1_tiny", 
     "terramind_v1_small", 
@@ -283,9 +283,9 @@ def get_dataloader(model_name):
             ToTensorV2(),  # Convert to tensor and back to channel first
         ],
             is_check_shapes=False,  # Not needed because of aligned data in TerraMesh
-            additional_targets={m: "image" for m in ["S2L2A", "DEM"]}  # Specify additional modalities to transform
+            additional_targets={m: "image" for m in ["S2L2A", "DEM", "cloud_mask"]}  # Specify additional modalities to transform
         ),
-        non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM", "cloud_mask"],  # Additional non-image keys
+        non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A"],  # Additional non-image keys
     )
 
     dataset = build_terramesh_dataset(
