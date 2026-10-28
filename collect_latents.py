@@ -262,16 +262,16 @@ def get_latents(model, input, model_name):
 def get_dataloader(model_name):
     if model_name.startswith("prithvi_eo_v2_"):
         crop_size = 224 * 3
-        batch_size = 12
+        batch_size = 64
     elif model_name.startswith("thor_v1_"):
         crop_size = 288
-        batch_size = 100
+        batch_size = 256
     elif model_name.startswith("croma_"):
         crop_size = 120
-        batch_size = 256
+        batch_size = 1024
     else:
         crop_size = 224
-        batch_size = 128
+        batch_size = 512
 
     val_transform = MultimodalTransforms(
         transforms=A.Compose([  # We use albumentations because of the shared transform between image modalities
