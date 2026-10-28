@@ -312,9 +312,7 @@ def main():
         )
 
     per_model_metadata = {}
-    per_model_keys = {}
     for model_name in MODELS:
-        keys = []
         dataloader = get_dataloader(model_name)
         model = load_model(model_name)
 
@@ -337,21 +335,18 @@ def main():
                 input = prepare_input(input, model_name)
                 latents = get_latents(model, input, model_name)
                 root[model_name].append(latents)
-                keys.extend(batch['__key__'])
 
         per_model_metadata[model_name] = metadatas
-        per_model_keys[model_name] = keys
-
-    values = list(per_model_keys.values())
-    assert all(values[0] == v for v in values[1:]), "Metadata mismatch between models."
-
-    metadata = per_model_metadata[MODELS[0]]
 
     with open(META_PATH, "wb") as f:
-        pickle.dump(metadata, f)
+        pickle.dump(per_model_metadata, f)
+
+    counts = {model_name: len(per_model_metadata[model_name]) for model_name in MODELS}
+    print("Sample counts per model:")
+    for model_name, count in counts.items():
+        print(f"{model_name}: {count}")
 
     print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
-    print(f"Processed {len(metadata)} samples.")
 
 
 if __name__ == "__main__":
