@@ -185,10 +185,11 @@ def main():
         "prithvi_eo_v2_600",
         "dofa_large_patch16_224",
         "croma_large",
-        "pixel_stats"
+        "pixel_stats",
+        "loc_baseline"
     ]
     targets = ["bio01", "bio04", "bio12", "bio15"]
-    resolutions = [0, 1, 2, 3, 4, 5, 6, 7]
+    resolutions = [0, 7]
 
     run_probe_args = []
     for model_name in model_names:
@@ -199,24 +200,12 @@ def main():
                 for resolution in resolutions:
                     run_probe_args.append((
                         latents_root,
-                        metadata[model_name],
+                        metadata,
                         resolution,
                         model_name,
                         target,
                         regressor_type
                     ))
-
-    for target in targets:
-        for regressor_type in ["linear"]:
-            for resolution in resolutions:
-                run_probe_args.append((
-                    latents_root,
-                    metadata[model_names[0]],
-                    resolution,
-                    "baseline",
-                    target,
-                    regressor_type
-                ))
 
     res = run_probe(*run_probe_args[run_id])
 
