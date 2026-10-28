@@ -199,7 +199,7 @@ def main():
                 for resolution in resolutions:
                     run_probe_args.append((
                         latents_root,
-                        metadata,
+                        metadata[model_name],
                         resolution,
                         model_name,
                         target,
@@ -211,7 +211,7 @@ def main():
             for resolution in resolutions:
                 run_probe_args.append((
                     latents_root,
-                    metadata,
+                    metadata[model_names[0]],
                     resolution,
                     "baseline",
                     target,

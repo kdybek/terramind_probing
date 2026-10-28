@@ -328,6 +328,9 @@ def main():
                     elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
 
                     meta['elevation'] = elevation
+                    for key in meta.keys():
+                        if hasattr(meta[key], "item"):
+                            meta[key] = meta[key].item()
                     metadatas.append(meta)
 
                 input = batch['S2L2A'].float()
