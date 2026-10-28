@@ -13,3 +13,5 @@ huggingface_hub
 matplotlib
 tueplots
 h3
+einops
+git+https://github.com/FM4CS/thor_terratorch_ext.git

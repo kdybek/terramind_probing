@@ -6,9 +6,11 @@ import torch
 import albumentations as A
 import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
-from utils.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
+from vendor.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
+from use_croma import PretrainedCROMA
 import zarr
 import pickle
+import subprocess
 import thor_terratorch_ext
 
 
@@ -25,7 +27,9 @@ MODELS = [
     "terramind_v1_base", 
     "terramind_v1_large", 
     "thor_v1_large", 
-    "prithvi_eo_v2_600"
+    "prithvi_eo_v2_600",
+    "dofa_large_patch16_224",
+    "croma_large"
 ]
 LATENT_DIMS_DICT = {
     "terramind_v1_tiny": 192,
@@ -110,6 +114,24 @@ THOR_STDS = [
 
 PRITHVI_V2_MEANS = [1087.0, 1342.0, 1433.0, 2734.0, 1958.0, 1363.0]
 PRITHVI_V2_STDS = [2248.0, 2179.0, 2178.0, 1850.0, 1242.0, 1049.0]
+PRITHVI_V2_BANDS = [
+    "BLUE",             # B2
+    "GREEN",            # B3
+    "RED",              # B4
+    "NIR_NARROW",       # B8A
+    "SWIR_1",           # B11
+    "SWIR_2",           # B12
+]
+
+DOFA_MEANS = [114.1099739 , 114.81779093, 126.63977424,  84.33539309,
+              97.84789168, 103.94461911, 101.435633, 72.32804172,
+              56.66528851]
+DOFA_STDS = [77.84352553, 69.96844919, 67.42465279, 64.57022983, 61.72545487,
+             61.34187099, 60.29744676, 47.88519516, 42.55886798]
+DOFA_BANDS = ["RED", "GREEN", "BLUE", "RED_EDGE_1", "RED_EDGE_2", "RED_EDGE_3", "NIR_BROAD", "SWIR_1", "SWIR_2"]
+
+CROMA_WEIGHTS_LINK = "https://huggingface.co/antofuller/CROMA/resolve/main/CROMA_large.pt"
+CROMA_WEIGHTS_PATH = "data/croma_large.pt"
 
 
 def load_model(model_name):
@@ -138,6 +160,17 @@ def load_model(model_name):
             model_name,
             pretrained=True,
         )
+    elif model_name.startswith("dofa_"):
+        model = BACKBONE_REGISTRY.build(
+            model_name,
+            pretrained=True,
+            model_bands=DOFA_BANDS,
+        )
+    elif model_name == "croma_large":
+        if not os.path.exists(CROMA_WEIGHTS_PATH):
+            print(f"Downloading CROMA weights from {CROMA_WEIGHTS_LINK}...")
+            subprocess.run(["wget", "-O", CROMA_WEIGHTS_PATH, CROMA_WEIGHTS_LINK], check=True)
+        model = PretrainedCROMA(pretrained_path=CROMA_WEIGHTS_PATH, size='large', modality='optical', image_resolution=120)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -147,13 +180,30 @@ def load_model(model_name):
     return model
 
 
+def satmae_normalize(x):
+    # taken from SatMAE and SeCo
+    x = x.float()
+
+    imgs = []
+    for channel in range(x.shape[1]):
+        min_value = x[:, channel, :, :].mean() - 2 * x[:, channel, :, :].std()
+        max_value = x[:, channel, :, :].mean() + 2 * x[:, channel, :, :].std()
+
+        img = (x[:, channel, :, :] - min_value) / (max_value - min_value)
+        img = torch.clip(img, 0, 1).unsqueeze(dim=1)
+        imgs.append(img)
+
+    return torch.cat(imgs, dim=1)
+
+
 def prepare_input(input, model_name):
     if model_name.startswith("terramind_v1_"):
         means = torch.tensor(TERRAMIND_V1_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(TERRAMIND_V1_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
     elif model_name.startswith("prithvi_v2_"):
-        input = input[:, [1, 2, 3, 8, 10, 11], :, :]  # Select bands: B2, B3, B4, B8A, B11, B12
+        indices = [S2L2A_BANDS.index(band) for band in PRITHVI_V2_BANDS]
+        input = input[:, indices, :, :]
         # Scale from 10m to 30m resolution
         input = F.interpolate(input, size=(224, 224), mode='area')
         means = torch.tensor(PRITHVI_V2_MEANS, device=input.device).view(1, -1, 1, 1)
@@ -164,13 +214,31 @@ def prepare_input(input, model_name):
         means = torch.tensor(THOR_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(THOR_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
+    elif model_name.startswith("dofa_"):
+        indices = [S2L2A_BANDS.index(band) for band in DOFA_BANDS]
+        input = input[:, indices, :, :]
+        input = (input / 10000.0) * 255.0
+        input = means = torch.tensor(DOFA_MEANS, device=input.device).view(1, -1, 1, 1)
+        stds = torch.tensor(DOFA_STDS, device=input.device).view(1, -1, 1, 1)
+        input = (input - means) / stds
+    elif model_name == "croma_large":
+        input = satmae_normalize(input)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     
     return input
 
+@torch.no_grad()
+def get_latents(model, input, model_name):
+    if model_name.startswith("croma_"):
+        latents = model(optical_images=input)["optical_GAP"].cpu().numpy()
+    else:
+        latents = model(input)[-1].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
 
-def get_dataset(model_name):
+    return latents
+
+
+def get_dataloader(model_name):
     if model_name.startswith("prithvi_v2_"):
         crop_size = 224 * 3
     else:
@@ -191,7 +259,7 @@ def get_dataset(model_name):
         non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"],  # Additional non-image keys
     )
 
-    return build_terramesh_dataset(
+    dataset = build_terramesh_dataset(
         path=DATASET_PATH,
         modalities=["S2L2A", "DEM"],
         split="val",
@@ -201,7 +269,9 @@ def get_dataset(model_name):
         batch_size=128,
     )
 
-    
+    return DataLoader(dataset, batch_size=None, num_workers=16, persistent_workers=True, prefetch_factor=2)
+
+
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -219,9 +289,7 @@ def main():
 
     per_model_metadata = {}
     for model_name in MODELS:
-        dataset = get_dataset(model_name)
-        dataloader = DataLoader(dataset, batch_size=None, num_workers=16,
-                                persistent_workers=True, prefetch_factor=2)
+        dataloader = get_dataloader(model_name)
         model = load_model(model_name)
 
         metadatas = []
@@ -242,7 +310,7 @@ def main():
                 input = batch['S2L2A'].float()
                 input = prepare_input(input, model_name)
                 input = input.to(DEVICE)
-                latents = model(input)[-1].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
+                latents = get_latents(model, input, model_name)
                 root[model_name].append(latents)
 
         per_model_metadata[model_name] = metadatas

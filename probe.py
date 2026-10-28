@@ -54,8 +54,7 @@ def run_probe(
         resolution,
         model_name,
         target,
-        regressor_type,
-        layer
+        regressor_type
     ):
     latents = np.asarray(latents_root[:])
 
@@ -148,7 +147,6 @@ def run_probe(
             "target": target,
             "resolution": resolution,
             "regressor": regressor_type,
-            "layer": layer,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "train_rmse_unscaled": train_rmse_unscaled,
@@ -179,24 +177,21 @@ def main():
         metadata = pickle.load(f)
     
     model_names = [
-        "terramind_v1_tiny",
-        "terramind_v1_small",
-        "terramind_v1_base",
-        "terramind_v1_large",
+        "terramind_v1_tiny", 
+        "terramind_v1_small", 
+        "terramind_v1_base", 
+        "terramind_v1_large", 
+        "thor_v1_large", 
+        "prithvi_eo_v2_600",
+        "dofa_large_patch16_224",
+        "croma_large"
     ]
-    num_layers_dict = {
-        "terramind_v1_tiny": 12,
-        "terramind_v1_small": 12,
-        "terramind_v1_base": 12,
-        "terramind_v1_large": 24,
-    }
     targets = ["bio01", "bio04", "bio12", "bio15"]
     resolutions = [0, 1, 2, 3, 4, 5, 6, 7]
 
     run_probe_args = []
     for model_name in model_names:
-        num_layers = num_layers_dict[model_name]
-        latents_root = root[model_name]["all"][f"layer_{num_layers - 1}"]
+        latents_root = root[model_name]
 
         for target in targets:
             for regressor_type in ["linear", "mlp"]:
@@ -207,8 +202,7 @@ def main():
                         resolution,
                         model_name,
                         target,
-                        regressor_type,
-                        num_layers - 1
+                        regressor_type
                     ))
 
     for target in targets:
@@ -220,28 +214,8 @@ def main():
                     resolution,
                     "baseline",
                     target,
-                    regressor_type,
-                    None
+                    regressor_type
                 ))
-
-    for model_name in ["terramind_v1_base"]:
-        num_layers = num_layers_dict[model_name]
-
-        for layer in range(num_layers):
-            latents_root = root[model_name]["all"][f"layer_{layer}"]
-
-            for target in targets:
-                for regressor_type in ["linear"]:
-                    for resolution in [0]:
-                        run_probe_args.append((
-                            latents_root,
-                            metadata,
-                            resolution,
-                            model_name,
-                            target,
-                            regressor_type,
-                            layer
-                        ))
 
     res = run_probe(*run_probe_args[run_id])
 
