@@ -320,16 +320,15 @@ def main():
         with torch.no_grad():
             for batch in tqdm(dataloader):
                 dems = batch['DEM']
-                meta = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
+                metadata = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
 
-                for dem in dems:
+                for meta, dem in zip(metadata, dems, strict=True):
                     C, H, W = dem.shape
                     assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
                     elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
 
-                    metadata = meta.pop(0)
-                    metadata['elevation'] = elevation
-                    metadatas.append(metadata)
+                    meta['elevation'] = elevation
+                    metadatas.append(meta)
 
                 input = batch['S2L2A'].float()
                 input = prepare_input(input, model_name)
