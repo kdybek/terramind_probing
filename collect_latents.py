@@ -342,7 +342,7 @@ def main():
         per_model_metadata[model_name] = metadatas
         per_model_keys[model_name] = keys
 
-    values = per_model_keys.values()
+    values = list(per_model_keys.values())
     assert all(values[0] == v for v in values[1:]), "Metadata mismatch between models."
 
     metadata = per_model_metadata[MODELS[0]]
