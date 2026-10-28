@@ -4,12 +4,12 @@ from torch.utils.data import DataLoader
 from terratorch import BACKBONE_REGISTRY
 import torch
 import albumentations as A
+import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
-from utils.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms, MultimodalNormalize, statistics
-import pandas as pd
+from utils.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
 import zarr
 import pickle
-import subprocess
+import thor_terratorch_ext
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,13 +19,36 @@ ZARR_PATH = os.path.join(DATA_DIR, "latents.zarr")
 META_PATH = os.path.join(DATA_DIR, "metadata.pkl")
 
 METADATA_KEYS = ["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"]
-MODELS = ["terramind_v1_tiny", "terramind_v1_small", "terramind_v1_base", "terramind_v1_large"]
+MODELS = [
+    "terramind_v1_tiny", 
+    "terramind_v1_small", 
+    "terramind_v1_base", 
+    "terramind_v1_large", 
+    "thor_v1_large", 
+    "prithvi_eo_v2_600"
+]
 LATENT_DIMS_DICT = {
     "terramind_v1_tiny": 192,
     "terramind_v1_small": 384,
     "terramind_v1_base": 768,
-    "terramind_v1_large": 1024
+    "terramind_v1_large": 1024,
+    "prithvi_eo_v2_600": 1280,
 }
+
+S2L2A_BANDS = [
+    "COASTAL_AEROSOL",  # B1
+    "BLUE",             # B2
+    "GREEN",            # B3
+    "RED",              # B4
+    "RED_EDGE_1",       # B5
+    "RED_EDGE_2",       # B6
+    "RED_EDGE_3",       # B7
+    "NIR_BROAD",        # B8
+    "NIR_NARROW",       # B8A
+    "WATER_VAPOR",      # B9
+    "SWIR_1",           # B11
+    "SWIR_2",           # B12
+]
 
 TERRAMIND_V1_MEANS = [
     1390.458,
@@ -56,14 +79,68 @@ TERRAMIND_V1_STDS = [
     1334.311,
 ]
 
+THOR_MEANS = [
+    0.182569,  # COASTAL_AEROSOL (B1)
+    0.176620,  # BLUE (B2)
+    0.195923,  # GREEN (B3)
+    0.213948,  # RED (B4)
+    0.263378,  # RED_EDGE_1 (B5)
+    0.300818,  # RED_EDGE_2 (B6)
+    0.313144,  # RED_EDGE_3 (B7)
+    0.308133,  # NIR_BROAD (B8)
+    0.320993,  # NIR_NARROW (B8A)
+    0.322589,  # WATER_VAPOR (B9)
+    0.221550,  # SWIR_1 (B11)
+    0.175772,  # SWIR_2 (B12)
+]
+THOR_STDS = [
+    0.282463,  # COASTAL_AEROSOL (B1)
+    0.264520,  # BLUE (B2)
+    0.252949,  # GREEN (B3)
+    0.259180,  # RED (B4)
+    0.272771,  # RED_EDGE_1 (B5)
+    0.248175,  # RED_EDGE_2 (B6)
+    0.235432,  # RED_EDGE_3 (B7)
+    0.226434,  # NIR_BROAD (B8)
+    0.223274,  # NIR_NARROW (B8A)
+    0.235857,  # WATER_VAPOR (B9)
+    0.171606,  # SWIR_1 (B11)
+    0.156223,  # SWIR_2 (B12)
+]
+
+PRITHVI_V2_MEANS = [1087.0, 1342.0, 1433.0, 2734.0, 1958.0, 1363.0]
+PRITHVI_V2_STDS = [2248.0, 2179.0, 2178.0, 1850.0, 1242.0, 1049.0]
+
 
 def load_model(model_name):
-    model = BACKBONE_REGISTRY.build(
-        model_name,
-        pretrained=True,
-        modalities=["S2L2A"],
-        merge_method='mean'
-    )
+    if model_name.startswith("terramind_v1_"):
+        model = BACKBONE_REGISTRY.build(
+            model_name,
+            pretrained=True,
+            modalities=["S2L2A"],
+            merge_method='mean'
+        )
+    elif model_name.startswith("thor_v1_"):
+        model = BACKBONE_REGISTRY.build(
+            model_name,
+            pretrained=True,
+            model_bands=S2L2A_BANDS,
+            input_params=dict(  # Optional input parameters to customize
+                ground_covers=[
+                    10 * 224 * 224
+                ],  # Ground cover in meters (typically input image size [px] * input image resolution)
+                flexivit_patch_size_seqs=[16],  # Patch size in pixels
+            ),
+            merge_method='mean'
+        )
+    elif model_name.startswith("prithvi_v2_"):
+        model = BACKBONE_REGISTRY.build(
+            model_name,
+            pretrained=True,
+        )
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
     model.to(DEVICE)
     model.eval()
 
@@ -75,15 +152,35 @@ def prepare_input(input, model_name):
         means = torch.tensor(TERRAMIND_V1_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(TERRAMIND_V1_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
-        return input
+    elif model_name.startswith("prithvi_v2_"):
+        input = input[:, [1, 2, 3, 8, 10, 11], :, :]  # Select bands: B2, B3, B4, B8A, B11, B12
+        # Scale from 10m to 30m resolution
+        input = F.interpolate(input, size=(224, 224), mode='area')
+        means = torch.tensor(PRITHVI_V2_MEANS, device=input.device).view(1, -1, 1, 1)
+        stds = torch.tensor(PRITHVI_V2_STDS, device=input.device).view(1, -1, 1, 1)
+        input = (input - means) / stds
+    elif model_name.startswith("thor_v1_"):
+        input = input / 10000.0
+        means = torch.tensor(THOR_MEANS, device=input.device).view(1, -1, 1, 1)
+        stds = torch.tensor(THOR_STDS, device=input.device).view(1, -1, 1, 1)
+        input = (input - means) / stds
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+    
+    return input
 
 
-def main():
+def get_dataset(model_name):
+    if model_name.startswith("prithvi_v2_"):
+        crop_size = 224 * 3
+    else:
+        crop_size = 224
+
     val_transform = MultimodalTransforms(
         transforms=A.Compose([  # We use albumentations because of the shared transform between image modalities
             # Convert data to channel last (expected shape from albumentations)
             Transpose([1, 2, 0]),
-            A.CenterCrop(224, 224),  # Use center crop in val split
+            A.CenterCrop(crop_size, crop_size),  # Use center crop in val split
             # A.RandomCrop(224, 224),  # Use random crop in train split
             # A.D4(),  # Optionally, use random flipping and rotation for the train split
             ToTensorV2(),  # Convert to tensor and back to channel first
@@ -94,7 +191,7 @@ def main():
         non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"],  # Additional non-image keys
     )
 
-    dataset = build_terramesh_dataset(
+    return build_terramesh_dataset(
         path=DATASET_PATH,
         modalities=["S2L2A", "DEM"],
         split="val",
@@ -104,9 +201,8 @@ def main():
         batch_size=128,
     )
 
-    dataloader = DataLoader(dataset, batch_size=None, num_workers=16,
-                            persistent_workers=True, prefetch_factor=2)
-
+    
+def main():
     os.makedirs(DATA_DIR, exist_ok=True)
 
     root = zarr.open(ZARR_PATH, mode="w")
@@ -117,12 +213,15 @@ def main():
         root.create_dataset(
             model_name,
             shape=(0, latent_dim),
-            chunks=(256, latent_dim),
+            chunks=(1024, latent_dim),
             dtype=np.float32,
         )
 
     per_model_metadata = {}
     for model_name in MODELS:
+        dataset = get_dataset(model_name)
+        dataloader = DataLoader(dataset, batch_size=None, num_workers=16,
+                                persistent_workers=True, prefetch_factor=2)
         model = load_model(model_name)
 
         metadatas = []
@@ -148,13 +247,16 @@ def main():
 
         per_model_metadata[model_name] = metadatas
 
-    with open(META_PATH, "wb") as f:
-        pickle.dump(per_model_metadata, f)
+    values = per_model_metadata.values()
+    assert all(values[0] == v for v in values[1:]), "Metadata mismatch between models."
 
-    per_model_counts = {model_name: len(per_model_metadata[model_name]) for model_name in MODELS}
+    metadata = values[0]
+
+    with open(META_PATH, "wb") as f:
+        pickle.dump(metadata, f)
 
     print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
-    print(f"Processed samples per model: {per_model_counts}.")
+    print(f"Processed {len(metadata)} samples.")
 
 
 if __name__ == "__main__":
