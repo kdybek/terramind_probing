@@ -3,6 +3,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from terratorch import BACKBONE_REGISTRY
 import torch
+from torchvision.transforms.functional import center_crop
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from vendor.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
@@ -30,7 +31,8 @@ MODELS = [
     "prithvi_eo_v2_600",
     "dofa_large_patch16_224",
     "croma_large",
-    "pixel_stats"  # Added pixel_stats as a model for comparison
+    "pixel_stats",  # Added pixel_stats as a model for comparison
+    "loc_baseline"
 ]
 LATENT_DIMS_DICT = {
     "terramind_v1_tiny": 192,
@@ -42,6 +44,7 @@ LATENT_DIMS_DICT = {
     "dofa_large_patch16_224": 1024,
     "croma_large": 1024,
     "pixel_stats": 24,  # 12 means + 12 stds
+    "loc_baseline": 3, # 3 coordinates (lat, lon, elevation)
 }
 
 S2L2A_BANDS = [
@@ -87,6 +90,7 @@ TERRAMIND_V1_STDS = [
     1434.261,
     1334.311,
 ]
+TERRAMIND_V1_CROP_SIZE = 224
 
 THOR_MEANS = [
     0.182569,  # COASTAL_AEROSOL (B1)
@@ -116,6 +120,7 @@ THOR_STDS = [
     0.171606,  # SWIR_1 (B11)
     0.156223,  # SWIR_2 (B12)
 ]
+THOR_CROP_SIZE = 240
 
 PRITHVI_V2_MEANS = [1087.0, 1342.0, 1433.0, 2734.0, 1958.0, 1363.0]
 PRITHVI_V2_STDS = [2248.0, 2179.0, 2178.0, 1850.0, 1242.0, 1049.0]
@@ -127,6 +132,7 @@ PRITHVI_V2_BANDS = [
     "SWIR_1",           # B11
     "SWIR_2",           # B12
 ]
+PRITHVI_V2_CROP_SIZE = 224
 
 DOFA_MEANS = [114.1099739 , 114.81779093, 126.63977424,  84.33539309,
               97.84789168, 103.94461911, 101.435633, 72.32804172,
@@ -134,9 +140,11 @@ DOFA_MEANS = [114.1099739 , 114.81779093, 126.63977424,  84.33539309,
 DOFA_STDS = [77.84352553, 69.96844919, 67.42465279, 64.57022983, 61.72545487,
              61.34187099, 60.29744676, 47.88519516, 42.55886798]
 DOFA_BANDS = ["RED", "GREEN", "BLUE", "RED_EDGE_1", "RED_EDGE_2", "RED_EDGE_3", "NIR_BROAD", "SWIR_1", "SWIR_2"]
+DOFA_CROP_SIZE = 224
 
 CROMA_WEIGHTS_LINK = "https://huggingface.co/antofuller/CROMA/resolve/main/CROMA_large.pt"
 CROMA_WEIGHTS_PATH = "data/croma_large.pt"
+CROMA_CROP_SIZE = 120
 
 
 def pixel_stats(x):
@@ -183,7 +191,7 @@ def load_model(model_name):
             print(f"Downloading CROMA weights from {CROMA_WEIGHTS_LINK}...")
             subprocess.run(["wget", "-O", CROMA_WEIGHTS_PATH, CROMA_WEIGHTS_LINK], check=True)
         model = PretrainedCROMA(pretrained_path=CROMA_WEIGHTS_PATH, size='large', modality='optical', image_resolution=120)
-    elif model_name == "pixel_stats":
+    elif model_name in ["pixel_stats", "loc_baseline"]:
         return None
     else:
         raise ValueError(f"Unknown model name: {model_name}")
@@ -212,16 +220,19 @@ def satmae_normalize(x):
 
 def prepare_input(input, model_name):
     if model_name.startswith("terramind_v1_"):
+        input = center_crop(input, TERRAMIND_V1_CROP_SIZE)
         means = torch.tensor(TERRAMIND_V1_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(TERRAMIND_V1_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
     elif model_name.startswith("prithvi_eo_v2_"):
         indices = [S2L2A_BANDS.index(band) for band in PRITHVI_V2_BANDS]
         input = input[:, indices, :, :]
+        input = center_crop(input, PRITHVI_V2_CROP_SIZE)
         means = torch.tensor(PRITHVI_V2_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(PRITHVI_V2_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
     elif model_name.startswith("thor_v1_"):
+        input = center_crop(input, THOR_CROP_SIZE)
         input = input / 10000.0
         means = torch.tensor(THOR_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(THOR_STDS, device=input.device).view(1, -1, 1, 1)
@@ -229,13 +240,15 @@ def prepare_input(input, model_name):
     elif model_name.startswith("dofa_"):
         indices = [S2L2A_BANDS.index(band) for band in DOFA_BANDS]
         input = input[:, indices, :, :]
+        input = center_crop(input, DOFA_CROP_SIZE)
         input = (input / 10000.0) * 255.0
         means = torch.tensor(DOFA_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(DOFA_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
     elif model_name == "croma_large":
+        input = center_crop(input, CROMA_CROP_SIZE)
         input = satmae_normalize(input)
-    elif model_name == "pixel_stats":
+    elif model_name in ["pixel_stats", "loc_baseline"]:
         pass
     else:
         raise ValueError(f"Unknown model name: {model_name}")
@@ -244,37 +257,26 @@ def prepare_input(input, model_name):
     return input
 
 @torch.no_grad()
-def get_latents(model, input, model_name):
+def get_latents(model, input, model_name, metadata):
     if model_name.startswith("croma_"):
         latents = model(optical_images=input)["optical_GAP"].cpu().numpy()
     elif model_name.startswith("thor_v1_"):
         latents = model(input)[-1].mean(dim=[2, 3]).cpu().numpy()
     elif model_name == "pixel_stats":
         latents = pixel_stats(input).cpu().numpy()
+    elif model_name == "loc_baseline":
+        latents = torch.tensor([[meta["center_lat"], meta["center_lon"], meta["elevation"]] for meta in metadata], dtype=torch.float32).cpu().numpy()
     else:
         latents = model(input)[-1].mean(dim=1).cpu().numpy()
 
     return latents
 
 
-def get_dataloader(model_name):
-    if model_name.startswith("thor_v1_"):
-        crop_size = 240
-        batch_size = 128
-    elif model_name.startswith("croma_"):
-        crop_size = 120
-        batch_size = 512
-    else:
-        crop_size = 224
-        batch_size = 512
-
+def get_dataloader():
     val_transform = MultimodalTransforms(
         transforms=A.Compose([  # We use albumentations because of the shared transform between image modalities
             # Convert data to channel last (expected shape from albumentations)
             Transpose([1, 2, 0]),
-            A.CenterCrop(crop_size, crop_size),  # Use center crop in val split
-            # A.RandomCrop(224, 224),  # Use random crop in train split
-            # A.D4(),  # Optionally, use random flipping and rotation for the train split
             ToTensorV2(),  # Convert to tensor and back to channel first
         ],
             is_check_shapes=False,  # Not needed because of aligned data in TerraMesh
@@ -290,7 +292,7 @@ def get_dataloader(model_name):
         transform=val_transform,
         shuffle=False,
         return_metadata=True,
-        batch_size=batch_size,
+        batch_size=128,
     )
 
     return DataLoader(dataset, batch_size=None, num_workers=16, persistent_workers=True, prefetch_factor=2)
@@ -311,44 +313,37 @@ def main():
             dtype=np.float32,
         )
 
-    per_model_metadata = {}
-    for model_name in MODELS:
-        dataloader = get_dataloader(model_name)
-        model = load_model(model_name)
+    dataloader = get_dataloader()
+    model_dict = {model_name: load_model(model_name) for model_name in MODELS}
 
-        metadatas = []
-        with torch.no_grad():
-            for batch in tqdm(dataloader):
-                dems = batch['DEM']
-                metadata = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
+    metadatas = []
+    with torch.no_grad():
+        for batch in tqdm(dataloader):
+            dems = batch['DEM']
+            metadata = [{key: batch[key][i] for key in METADATA_KEYS} for i in range(len(dems))]
 
-                for meta, dem in zip(metadata, dems, strict=True):
-                    C, H, W = dem.shape
-                    assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
-                    elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
+            for meta, dem in zip(metadata, dems, strict=True):
+                C, H, W = dem.shape
+                assert C == 1, f"Expected DEM to have 1 channel, but got {C} channels."
+                elevation = dem[0, H // 2, W // 2].item()  # Get the elevation at the center pixel
 
-                    meta['elevation'] = elevation
-                    for key in meta.keys():
-                        if hasattr(meta[key], "item"):
-                            meta[key] = meta[key].item()
-                    metadatas.append(meta)
+                meta['elevation'] = elevation
+                for key in meta.keys():
+                    if hasattr(meta[key], "item"):
+                        meta[key] = meta[key].item()
+                metadatas.append(meta)
 
-                input = batch['S2L2A'].float()
+            input = batch['S2L2A'].float()
+            for model_name in MODELS:
                 input = prepare_input(input, model_name)
-                latents = get_latents(model, input, model_name)
+                latents = get_latents(model_dict[model_name], input, model_name, metadata)
                 root[model_name].append(latents)
 
-        per_model_metadata[model_name] = metadatas
-
     with open(META_PATH, "wb") as f:
-        pickle.dump(per_model_metadata, f)
-
-    counts = {model_name: len(per_model_metadata[model_name]) for model_name in MODELS}
-    print("Sample counts per model:")
-    for model_name, count in counts.items():
-        print(f"{model_name}: {count}")
+        pickle.dump(metadatas, f)
 
     print(f"Latents saved to {ZARR_PATH} and metadata saved to {META_PATH}")
+    print(f"Number of samples processed: {len(metadatas)}")
 
 
 if __name__ == "__main__":
