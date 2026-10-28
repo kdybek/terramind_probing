@@ -4,7 +4,6 @@ from torch.utils.data import DataLoader
 from terratorch import BACKBONE_REGISTRY
 import torch
 import albumentations as A
-import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
 from vendor.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
 from vendor.use_croma import PretrainedCROMA
@@ -161,7 +160,7 @@ def load_model(model_name):
             model_bands=S2L2A_BANDS,
             input_params=dict(  # Optional input parameters to customize
                 ground_covers=[
-                    2880
+                    2400
                 ],  # Ground cover in meters (typically input image size [px] * input image resolution)
                 flexivit_patch_size_seqs=[8],  # Patch size in pixels
             ),
@@ -218,8 +217,6 @@ def prepare_input(input, model_name):
     elif model_name.startswith("prithvi_eo_v2_"):
         indices = [S2L2A_BANDS.index(band) for band in PRITHVI_V2_BANDS]
         input = input[:, indices, :, :]
-        # Scale from 10m to 30m resolution
-        input = F.interpolate(input, size=(224, 224), mode='area')
         means = torch.tensor(PRITHVI_V2_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(PRITHVI_V2_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
@@ -260,15 +257,12 @@ def get_latents(model, input, model_name):
 
 
 def get_dataloader(model_name):
-    if model_name.startswith("prithvi_eo_v2_"):
-        crop_size = 224 * 3
-        batch_size = 64
-    elif model_name.startswith("thor_v1_"):
-        crop_size = 288
-        batch_size = 256
-    elif model_name.startswith("croma_"):
+    if model_name.startswith("thor_v1_"):
+        crop_size = 240
+        batch_size = 512
+    if model_name.startswith("croma_"):
         crop_size = 120
-        batch_size = 1024
+        batch_size = 2048
     else:
         crop_size = 224
         batch_size = 512
