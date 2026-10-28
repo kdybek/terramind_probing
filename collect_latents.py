@@ -7,7 +7,7 @@ import albumentations as A
 import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
 from vendor.terramesh import build_terramesh_dataset, Transpose, MultimodalTransforms
-from use_croma import PretrainedCROMA
+from vendor.use_croma import PretrainedCROMA
 import zarr
 import pickle
 import subprocess
@@ -29,14 +29,19 @@ MODELS = [
     "thor_v1_large", 
     "prithvi_eo_v2_600",
     "dofa_large_patch16_224",
-    "croma_large"
+    "croma_large",
+    "pixel_stats"  # Added pixel_stats as a model for comparison
 ]
 LATENT_DIMS_DICT = {
     "terramind_v1_tiny": 192,
     "terramind_v1_small": 384,
     "terramind_v1_base": 768,
     "terramind_v1_large": 1024,
+    "thor_v1_large": 1024,
     "prithvi_eo_v2_600": 1280,
+    "dofa_large_patch16_224": 1024,
+    "croma_large": 1024,
+    "pixel_stats": 24,  # 12 means + 12 stds
 }
 
 S2L2A_BANDS = [
@@ -134,6 +139,13 @@ CROMA_WEIGHTS_LINK = "https://huggingface.co/antofuller/CROMA/resolve/main/CROMA
 CROMA_WEIGHTS_PATH = "data/croma_large.pt"
 
 
+def pixel_stats(x):
+    mean = x.mean(dim=[2, 3])
+    std = x.std(dim=[2, 3])
+
+    return torch.cat([mean, std], dim=1)
+
+
 def load_model(model_name):
     if model_name.startswith("terramind_v1_"):
         model = BACKBONE_REGISTRY.build(
@@ -149,13 +161,13 @@ def load_model(model_name):
             model_bands=S2L2A_BANDS,
             input_params=dict(  # Optional input parameters to customize
                 ground_covers=[
-                    10 * 224 * 224
+                    2880
                 ],  # Ground cover in meters (typically input image size [px] * input image resolution)
-                flexivit_patch_size_seqs=[16],  # Patch size in pixels
+                flexivit_patch_size_seqs=[8],  # Patch size in pixels
             ),
             merge_method='mean'
         )
-    elif model_name.startswith("prithvi_v2_"):
+    elif model_name.startswith("prithvi_eo_v2_"):
         model = BACKBONE_REGISTRY.build(
             model_name,
             pretrained=True,
@@ -171,6 +183,8 @@ def load_model(model_name):
             print(f"Downloading CROMA weights from {CROMA_WEIGHTS_LINK}...")
             subprocess.run(["wget", "-O", CROMA_WEIGHTS_PATH, CROMA_WEIGHTS_LINK], check=True)
         model = PretrainedCROMA(pretrained_path=CROMA_WEIGHTS_PATH, size='large', modality='optical', image_resolution=120)
+    elif model_name == "pixel_stats":
+        return None
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -201,7 +215,7 @@ def prepare_input(input, model_name):
         means = torch.tensor(TERRAMIND_V1_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(TERRAMIND_V1_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
-    elif model_name.startswith("prithvi_v2_"):
+    elif model_name.startswith("prithvi_eo_v2_"):
         indices = [S2L2A_BANDS.index(band) for band in PRITHVI_V2_BANDS]
         input = input[:, indices, :, :]
         # Scale from 10m to 30m resolution
@@ -218,29 +232,40 @@ def prepare_input(input, model_name):
         indices = [S2L2A_BANDS.index(band) for band in DOFA_BANDS]
         input = input[:, indices, :, :]
         input = (input / 10000.0) * 255.0
-        input = means = torch.tensor(DOFA_MEANS, device=input.device).view(1, -1, 1, 1)
+        means = torch.tensor(DOFA_MEANS, device=input.device).view(1, -1, 1, 1)
         stds = torch.tensor(DOFA_STDS, device=input.device).view(1, -1, 1, 1)
         input = (input - means) / stds
     elif model_name == "croma_large":
         input = satmae_normalize(input)
+    elif model_name == "pixel_stats":
+        pass
     else:
         raise ValueError(f"Unknown model name: {model_name}")
-    
+
+    input = input.to(DEVICE)
     return input
 
 @torch.no_grad()
 def get_latents(model, input, model_name):
     if model_name.startswith("croma_"):
         latents = model(optical_images=input)["optical_GAP"].cpu().numpy()
+    elif model_name.startswith("thor_v1_"):
+        latents = model(input)[-1].mean(dim=[2, 3]).cpu().numpy()
+    elif model_name == "pixel_stats":
+        latents = pixel_stats(input).cpu().numpy()
     else:
-        latents = model(input)[-1].mean(axis=1).cpu().numpy()  # Average over spatial dimensions
+        latents = model(input)[-1].mean(dim=1).cpu().numpy()
 
     return latents
 
 
 def get_dataloader(model_name):
-    if model_name.startswith("prithvi_v2_"):
+    if model_name.startswith("prithvi_eo_v2_"):
         crop_size = 224 * 3
+    elif model_name.startswith("thor_v1_"):
+        crop_size = 288
+    elif model_name.startswith("croma_"):
+        crop_size = 120
     else:
         crop_size = 224
 
@@ -309,7 +334,6 @@ def main():
 
                 input = batch['S2L2A'].float()
                 input = prepare_input(input, model_name)
-                input = input.to(DEVICE)
                 latents = get_latents(model, input, model_name)
                 root[model_name].append(latents)
 
