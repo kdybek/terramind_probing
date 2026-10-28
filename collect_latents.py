@@ -335,8 +335,8 @@ def main():
 
             input = batch['S2L2A'].float()
             for model_name in MODELS:
-                input = prepare_input(input, model_name)
-                latents = get_latents(model_dict[model_name], input, model_name, metadata)
+                prepared_input = prepare_input(input, model_name)
+                latents = get_latents(model_dict[model_name], prepared_input, model_name, metadata)
                 root[model_name].append(latents)
 
     with open(META_PATH, "wb") as f:
