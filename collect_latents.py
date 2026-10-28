@@ -313,7 +313,9 @@ def main():
         )
 
     per_model_metadata = {}
+    per_model_keys = {}
     for model_name in MODELS:
+        keys = []
         dataloader = get_dataloader(model_name)
         model = load_model(model_name)
 
@@ -336,13 +338,15 @@ def main():
                 input = prepare_input(input, model_name)
                 latents = get_latents(model, input, model_name)
                 root[model_name].append(latents)
+                keys.extend(batch['__key__'])
 
         per_model_metadata[model_name] = metadatas
+        per_model_keys[model_name] = keys
 
-    values = per_model_metadata.values()
+    values = per_model_keys.values()
     assert all(values[0] == v for v in values[1:]), "Metadata mismatch between models."
 
-    metadata = values[0]
+    metadata = per_model_metadata[MODELS[0]]
 
     with open(META_PATH, "wb") as f:
         pickle.dump(metadata, f)
