@@ -262,12 +262,16 @@ def get_latents(model, input, model_name):
 def get_dataloader(model_name):
     if model_name.startswith("prithvi_eo_v2_"):
         crop_size = 224 * 3
+        batch_size = 12
     elif model_name.startswith("thor_v1_"):
         crop_size = 288
+        batch_size = 100
     elif model_name.startswith("croma_"):
         crop_size = 120
+        batch_size = 256
     else:
         crop_size = 224
+        batch_size = 128
 
     val_transform = MultimodalTransforms(
         transforms=A.Compose([  # We use albumentations because of the shared transform between image modalities
@@ -279,9 +283,9 @@ def get_dataloader(model_name):
             ToTensorV2(),  # Convert to tensor and back to channel first
         ],
             is_check_shapes=False,  # Not needed because of aligned data in TerraMesh
-            additional_targets={m: "image" for m in ["S2L2A", "DEM", "cloud_mask"]}  # Specify additional modalities to transform
+            additional_targets={m: "image" for m in ["S2L2A", "DEM"]}  # Specify additional modalities to transform
         ),
-        non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM"],  # Additional non-image keys
+        non_image_modalities=["__key__", "__url__", "center_lon", "center_lat", "time_S2L2A", "time_DEM", "cloud_mask"],  # Additional non-image keys
     )
 
     dataset = build_terramesh_dataset(
@@ -291,7 +295,7 @@ def get_dataloader(model_name):
         transform=val_transform,
         shuffle=False,
         return_metadata=True,
-        batch_size=128,
+        batch_size=batch_size,
     )
 
     return DataLoader(dataset, batch_size=None, num_workers=16, persistent_workers=True, prefetch_factor=2)
