@@ -1,8 +1,9 @@
 import numpy as np
 from sklearn.metrics import r2_score, root_mean_squared_error
 from sklearn.neural_network import MLPRegressor
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import GroupKFold
 import zarr
@@ -75,12 +76,12 @@ def run_probe(
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
     if regressor_type == "linear":
-        regressor = Pipeline([
+        base_regressor = Pipeline([
             ("x_scaler", StandardScaler()),
             ("ridge", Ridge(alpha=1.0, random_state=SEED))
         ])
     elif regressor_type == "mlp":
-        regressor = Pipeline([
+        base_regressor = Pipeline([
             ("x_scaler", StandardScaler()),
             ("mlp", MLPRegressor(
                 hidden_layer_sizes=(128, 64),
@@ -95,6 +96,19 @@ def run_probe(
             ))
         ])
 
+    if target == "bio12":
+        y_transformer = Pipeline([
+            ("log", FunctionTransformer(np.log1p, inverse_func=np.expm1)),
+            ("scaler", StandardScaler())
+        ])
+    else:
+        y_transformer = StandardScaler()
+
+    regressor = TransformedTargetRegressor(
+        regressor=base_regressor,
+        transformer=y_transformer
+    )
+
     for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
         if model_name != "baseline":
             X_train, X_val = latents[train_idx], latents[val_idx]
@@ -103,20 +117,10 @@ def run_probe(
 
         y_train, y_val = y[train_idx], y[val_idx]
 
-        y_train_unscaled = y_train.copy()
-        y_val_unscaled = y_val.copy()
-
-        y_scaler = StandardScaler()
-        y_train = y_scaler.fit_transform(y_train)
-        y_val = y_scaler.transform(y_val)
-
         regressor.fit(X_train, y_train)
 
         y_pred_train = regressor.predict(X_train).reshape(-1, 1)
         y_pred_val = regressor.predict(X_val).reshape(-1, 1)
-
-        y_pred_train_unscaled = y_scaler.inverse_transform(y_pred_train)
-        y_pred_val_unscaled = y_scaler.inverse_transform(y_pred_val)
 
         train_rmse = root_mean_squared_error(
             y_train,
@@ -126,16 +130,6 @@ def run_probe(
         val_rmse = root_mean_squared_error(
             y_val,
             y_pred_val
-        )
-
-        train_rmse_unscaled = root_mean_squared_error(
-            y_train_unscaled,
-            y_pred_train_unscaled
-        )
-
-        val_rmse_unscaled = root_mean_squared_error(
-            y_val_unscaled,
-            y_pred_val_unscaled
         )
 
         train_r2 = r2_score(y_train, y_pred_train)
@@ -149,8 +143,6 @@ def run_probe(
             "regressor": regressor_type,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
-            "train_rmse_unscaled": train_rmse_unscaled,
-            "val_rmse_unscaled": val_rmse_unscaled,
             "train_r2": train_r2,
             "val_r2": val_r2
         })
