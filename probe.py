@@ -69,7 +69,6 @@ def run_probe(
 
     lats = np.array([r["center_lat"] for r in metadata])
     lons = np.array([r["center_lon"] for r in metadata])
-    elevations = np.array([r["elevation"] for r in metadata])
 
     groups = assign_h3_blocks(lats, lons, resolution)
 
@@ -110,11 +109,7 @@ def run_probe(
     )
 
     for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
-        if model_name != "baseline":
-            X_train, X_val = latents[train_idx], latents[val_idx]
-        else:
-            X_train, X_val = np.array([lats[train_idx], lons[train_idx], elevations[train_idx]]).T, np.array([lats[val_idx], lons[val_idx], elevations[val_idx]]).T
-
+        X_train, X_val = latents[train_idx], latents[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
         regressor.fit(X_train, y_train)
