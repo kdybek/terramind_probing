@@ -71,7 +71,7 @@ def run_probe(
     lats = np.array([r["center_lat"] for r in metadata])
     lons = np.array([r["center_lon"] for r in metadata])
 
-    groups = assign_h3_blocks(lats, lons, resolution)
+    groups = np.array(assign_h3_blocks(lats, lons, resolution))
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
