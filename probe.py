@@ -1,6 +1,5 @@
 import numpy as np
 from sklearn.metrics import r2_score, root_mean_squared_error
-from sklearn.neural_network import MLPRegressor
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
@@ -11,6 +10,8 @@ import pickle
 import os
 import sys
 import h3
+
+from utils.torch_mlp import TorchMLPRegressor
 
 
 DATA_DIR = "data"
@@ -74,48 +75,34 @@ def run_probe(
 
     y = np.array([r[target] for r in metadata]).reshape(-1, 1)
 
-    if regressor_type == "linear":
-        base_regressor = Pipeline([
-            ("x_scaler", StandardScaler()),
-            ("ridge", Ridge(alpha=1.0, random_state=SEED))
-        ])
-    elif regressor_type == "mlp":
-        base_regressor = Pipeline([
-            ("x_scaler", StandardScaler()),
-            ("mlp", MLPRegressor(
-                hidden_layer_sizes=(128, 64),
-                activation="relu",
-                solver="adam",
-                alpha=1e-4,
-                learning_rate_init=1e-3,
-                batch_size=512,
-                max_iter=300,
-                early_stopping=False,
-                random_state=SEED
-            ))
-        ])
-
-    if target == "bio12":
-        y_transformer = Pipeline([
-            ("log", FunctionTransformer(np.log1p, inverse_func=np.expm1)),
-            ("scaler", StandardScaler())
-        ])
-    else:
-        y_transformer = StandardScaler()
-
-    regressor = TransformedTargetRegressor(
-        regressor=base_regressor,
-        transformer=y_transformer
-    )
+    x_scaler = StandardScaler()
+    y_scaler = StandardScaler()
 
     for i, (train_idx, val_idx) in enumerate(cv.split(latents, y, groups=groups)):
+        if regressor_type == "linear":
+            regressor = Ridge(alpha=1.0, random_state=SEED+i)
+        elif regressor_type == "mlp":
+            regressor = TorchMLPRegressor(random_state=SEED+i)
+
         X_train, X_val = latents[train_idx], latents[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
+        groups_train = groups[train_idx]
 
-        regressor.fit(X_train, y_train)
+        X_train = x_scaler.fit_transform(X_train)
+        X_val = x_scaler.transform(X_val)
+
+        y_train_scaled = y_scaler.fit_transform(y_train)
+
+        if regressor_type == "mlp":
+            regressor.fit(X_train, y_train_scaled, groups=groups_train)
+        else:
+            regressor.fit(X_train, y_train_scaled)
 
         y_pred_train = regressor.predict(X_train).reshape(-1, 1)
         y_pred_val = regressor.predict(X_val).reshape(-1, 1)
+
+        y_pred_train = y_scaler.inverse_transform(y_pred_train)
+        y_pred_val = y_scaler.inverse_transform(y_pred_val)
 
         train_rmse = root_mean_squared_error(
             y_train,
