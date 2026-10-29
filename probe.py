@@ -89,7 +89,7 @@ def run_probe(
                 alpha=1e-4,
                 learning_rate_init=1e-3,
                 batch_size=512,
-                max_iter=50,
+                max_iter=200,
                 early_stopping=False,
                 random_state=SEED
             ))
