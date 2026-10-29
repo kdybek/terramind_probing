@@ -16,7 +16,7 @@ DATA_DIR = "data"
 LATENTS_PATH = os.path.join(DATA_DIR, "latents.zarr")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata_3.pkl")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
-SEED = 42
+SEED = 0
 
 
 def assign_h3_blocks(lat, lon, resolution):
@@ -89,7 +89,7 @@ def run_probe(
                 alpha=1e-4,
                 learning_rate_init=1e-3,
                 batch_size=512,
-                max_iter=300,
+                max_iter=50,
                 early_stopping=False,
                 random_state=SEED
             ))
